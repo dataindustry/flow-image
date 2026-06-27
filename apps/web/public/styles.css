@@ -21,8 +21,64 @@ input {
 
 .app {
   display: grid;
+  min-height: 100vh;
+}
+
+.annotation-panel {
+  display: grid;
   grid-template-rows: auto 1fr;
   min-height: 100vh;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+.pair-panel {
+  width: min(720px, calc(100vw - 32px));
+  margin: 32px auto;
+  display: grid;
+  gap: 14px;
+}
+
+.pair-panel h1 {
+  margin: 0;
+  font-size: 28px;
+  line-height: 1.1;
+}
+
+.pair-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.pair-actions input {
+  min-height: 38px;
+  min-width: min(360px, 100%);
+  border: 1px solid #c7ceda;
+  border-radius: 6px;
+  padding: 0 10px;
+}
+
+.pair-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  overflow-wrap: anywhere;
+}
+
+.session-list {
+  display: grid;
+  gap: 8px;
+}
+
+.session-item {
+  min-height: 40px;
+  border: 1px solid #c7ceda;
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 0 12px;
+  text-align: left;
 }
 
 .toolbar {

@@ -10,6 +10,44 @@ export function computeStrokeWidth(event, baseWidth) {
   return baseWidth * (0.6 + pressure * 1.2);
 }
 
+const PAIR_STATE_KEY = "flowImagePair";
+
+export function savePairState(storage, state) {
+  storage.setItem(
+    PAIR_STATE_KEY,
+    JSON.stringify({
+      pair_id: state.pair_id,
+      pair_device_token: state.pair_device_token
+    })
+  );
+}
+
+export function readPairState(storage) {
+  try {
+    const raw = storage.getItem(PAIR_STATE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function setSafeText(node, value) {
+  node.textContent = String(value ?? "");
+}
+
+export async function fetchImageObjectUrl(
+  url,
+  pairDeviceToken,
+  fetchImpl = fetch,
+  urlImpl = URL
+) {
+  const res = await fetchImpl(url, {
+    headers: { "X-Pair-Device-Token": pairDeviceToken }
+  });
+  if (!res.ok) throw new Error(`Image load failed: ${res.status}`);
+  return urlImpl.createObjectURL(await res.blob());
+}
+
 function getSessionInfo() {
   const match = window.location.pathname.match(/\/s\/([^/]+)/);
   const params = new URLSearchParams(window.location.search);
@@ -22,6 +60,14 @@ function getSessionInfo() {
 function withSecret(url, secret) {
   const separator = url.includes("?") ? "&" : "?";
   return `${url}${separator}secret=${encodeURIComponent(secret)}`;
+}
+
+function getPairState() {
+  return readPairState(window.localStorage);
+}
+
+function pairHeaders(pairState) {
+  return { "X-Pair-Device-Token": pairState.pair_device_token };
 }
 
 async function blobFromCanvas(canvas) {
@@ -43,6 +89,9 @@ export function initViewer(doc = document) {
   };
 
   const { sessionId, secret } = getSessionInfo();
+  const pairState = getPairState();
+  const pairPanel = doc.getElementById("pairPanel");
+  const annotationPanel = doc.getElementById("annotationPanel");
   const baseImage = doc.getElementById("baseImage");
   const canvas = doc.getElementById("drawCanvas");
   const ctx = canvas.getContext("2d");
@@ -65,7 +114,9 @@ export function initViewer(doc = document) {
     state.pageIndex = Math.max(0, Math.min(index, state.session.screenshots.length - 1));
     const page = currentPage();
     pageStatus.value = `Page ${state.pageIndex + 1} / ${state.session.screenshots.length}`;
-    baseImage.src = withSecret(page.image_url, secret);
+    baseImage.src = pairState
+      ? await fetchImageObjectUrl(page.image_url, pairState.pair_device_token)
+      : withSecret(page.image_url, secret);
     await baseImage.decode();
     canvas.width = page.width;
     canvas.height = page.height;
@@ -154,7 +205,7 @@ export function initViewer(doc = document) {
       body.append("merged_png", blob, "merged.png");
       const res = await fetch(`/api/sessions/${sessionId}/annotations/${page.screenshot_id}`, {
         method: "POST",
-        headers: { "X-Session-Secret": secret },
+        headers: pairState ? pairHeaders(pairState) : { "X-Session-Secret": secret },
         body
       });
       if (!res.ok) throw new Error(`Save failed: ${res.status}`);
@@ -165,11 +216,21 @@ export function initViewer(doc = document) {
   });
 
   async function start() {
-    if (!sessionId || !secret) {
-      status.value = "Missing session";
+    if (!sessionId) {
+      await startPairHome(doc);
       return;
     }
-    const res = await fetch(`/api/sessions/${sessionId}?secret=${encodeURIComponent(secret)}`);
+    if (!sessionId || !secret) {
+      if (!pairState) {
+        status.value = "Missing session";
+        return;
+      }
+    }
+    if (pairPanel) pairPanel.hidden = true;
+    if (annotationPanel) annotationPanel.hidden = false;
+    const res = pairState
+      ? await fetch(`/api/sessions/${sessionId}`, { headers: pairHeaders(pairState) })
+      : await fetch(`/api/sessions/${sessionId}?secret=${encodeURIComponent(secret)}`);
     if (!res.ok) {
       status.value = `Load failed: ${res.status}`;
       return;
@@ -184,6 +245,79 @@ export function initViewer(doc = document) {
   }
 
   return { start, state };
+}
+
+async function startPairHome(doc) {
+  const pairPanel = doc.getElementById("pairPanel");
+  const annotationPanel = doc.getElementById("annotationPanel");
+  const pairCodeOutput = doc.getElementById("pairCodeOutput");
+  const pairStatus = doc.getElementById("pairStatus");
+  const bindInput = doc.getElementById("bindPairCode");
+  const sessionList = doc.getElementById("sessionList");
+  if (!pairPanel) return;
+
+  pairPanel.hidden = false;
+  if (annotationPanel) annotationPanel.hidden = true;
+
+  async function loadCurrent() {
+    const pairState = getPairState();
+    if (!pairState) {
+      setSafeText(pairStatus, "Not paired");
+      return;
+    }
+    const res = await fetch("/api/pairs/current", { headers: pairHeaders(pairState) });
+    if (!res.ok) {
+      setSafeText(pairStatus, `Pair load failed: ${res.status}`);
+      return;
+    }
+    const pair = await res.json();
+    setSafeText(pairStatus, `Paired: ${pair.pair_id}`);
+    sessionList.replaceChildren();
+    for (const session of pair.sessions ?? []) {
+      const item = doc.createElement("button");
+      item.type = "button";
+      item.className = "session-item";
+      setSafeText(item, `${session.title} · ${session.status}`);
+      item.addEventListener("click", () => {
+        window.location.assign(`/s/${session.session_id}`);
+      });
+      sessionList.append(item);
+    }
+  }
+
+  doc.getElementById("generatePair").addEventListener("click", async () => {
+    const res = await fetch("/api/pairs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ label: navigator.userAgent.slice(0, 80) })
+    });
+    if (!res.ok) {
+      setSafeText(pairStatus, `Generate failed: ${res.status}`);
+      return;
+    }
+    const pair = await res.json();
+    savePairState(window.localStorage, pair);
+    setSafeText(pairCodeOutput, pair.pair_code);
+    await loadCurrent();
+  });
+
+  doc.getElementById("bindPair").addEventListener("click", async () => {
+    const res = await fetch("/api/pairs/bind-device", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pair_code: bindInput.value, label: navigator.userAgent.slice(0, 80) })
+    });
+    if (!res.ok) {
+      setSafeText(pairStatus, `Bind failed: ${res.status}`);
+      return;
+    }
+    const pair = await res.json();
+    savePairState(window.localStorage, pair);
+    setSafeText(pairCodeOutput, "");
+    await loadCurrent();
+  });
+
+  await loadCurrent();
 }
 
 if (typeof document !== "undefined" && document.getElementById("drawCanvas")) {
