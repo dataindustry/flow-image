@@ -35,6 +35,6 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const config = makeConfig();
   const app = createApp(config);
   app.listen(config.port, config.bindHost, () => {
-    console.log(`LikeWater backend listening on http://${config.bindHost}:${config.port}`);
+    console.log(`FlowImage backend listening on http://${config.bindHost}:${config.port}`);
   });
 }

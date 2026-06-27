@@ -6,7 +6,7 @@ import { collectAnnotations } from "./tools/collect.mjs";
 
 export function createServer() {
   const server = new McpServer({
-    name: "like-water",
+    name: "net.like-water/flow-image",
     version: "0.1.0"
   });
 

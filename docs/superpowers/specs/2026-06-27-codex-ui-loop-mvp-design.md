@@ -1,4 +1,4 @@
-# LikeWater MVP Design (Simplified)
+# FlowImage MVP Design (Simplified)
 
 **Date:** 2026-06-27
 **Status:** Updated simplified MVP design
@@ -88,7 +88,7 @@ sequenceDiagram
 ## 5. Repository Structure
 
 ```text
-like-water/
+flow-image/
 ├─ README.md
 ├─ package.json
 ├─ pnpm-workspace.yaml

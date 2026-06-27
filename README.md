@@ -1,4 +1,4 @@
-# LikeWater
+# FlowImage
 
 Local MVP for an explicit Codex image feedback loop:
 
@@ -50,10 +50,17 @@ BRIDGE_TOKEN=dev-token PUBLIC_BASE_URL=http://127.0.0.1:3939 pnpm dev:backend
 Register the MCP bridge:
 
 ```bash
-codex mcp add likeWater -- node /Users/ryu/projects/AgenticProjects/LIKE-WATER/apps/mcp-bridge/src/index.mjs
+codex mcp add flow_image -- node /Users/ryu/projects/AgenticProjects/LIKE-WATER/apps/mcp-bridge/src/index.mjs
 ```
 
 The bridge reads `PUBLIC_BASE_URL` and `BRIDGE_TOKEN` from its environment.
+
+Naming:
+
+- Product/UI name: `FlowImage`
+- Local Codex MCP alias: `flow_image`
+- Package/slug name: `flow-image`
+- Future MCP Registry name: `net.like-water/flow-image`
 
 ## Manual E2E
 

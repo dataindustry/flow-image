@@ -15,7 +15,7 @@ let dataDir;
 let app;
 
 beforeEach(async () => {
-  dataDir = await mkdtemp(path.join(tmpdir(), "like-water-"));
+  dataDir = await mkdtemp(path.join(tmpdir(), "flow-image-"));
   app = createApp({
     dataDir,
     bridgeToken: "test-token",
