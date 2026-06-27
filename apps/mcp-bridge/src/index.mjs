@@ -6,7 +6,7 @@ import { collectAnnotations } from "./tools/collect.mjs";
 
 export function createServer() {
   const server = new McpServer({
-    name: "codex-ui-loop",
+    name: "like-water",
     version: "0.1.0"
   });
 

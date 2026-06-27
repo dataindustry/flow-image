@@ -1,8 +1,8 @@
-# Codex UI Loop MVP Implementation Plan
+# LikeWater MVP Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build the simplified Codex image feedback loop MVP: explicit screenshot publishing, iPad/Web merged-only annotation, and explicit annotation collection.
+**Goal:** Build the simplified LikeWater MVP: explicit screenshot publishing, iPad/Web merged-only annotation, and explicit annotation collection.
 
 **Architecture:** A pnpm monorepo contains a local Express backend, a static Web/iPad canvas frontend served by that backend, and a stdio MCP bridge. The backend owns sessions, PNG storage, authenticated same-origin file reads, and upload validation. The bridge owns the two explicit Codex-facing tools and uses backend APIs plus local merged image paths.
 
@@ -78,16 +78,16 @@ Run:
 git init -b main
 git add docs/superpowers/specs docs/superpowers/plans
 git commit -m "docs: add codex ui loop design and plan"
-git switch -c feature/codex-ui-loop-mvp
+git switch -c feature/like-water
 ```
 
-Expected: repository exists on `feature/codex-ui-loop-mvp`. If `git commit` fails because identity is missing, set repo-local identity:
+Expected: repository exists on `feature/like-water`. If `git commit` fails because identity is missing, set repo-local identity:
 
 ```bash
 git config user.name "Codex"
 git config user.email "codex@example.local"
 git commit -m "docs: add codex ui loop design and plan"
-git switch -c feature/codex-ui-loop-mvp
+git switch -c feature/like-water
 ```
 
 - [ ] **Step 2: Create package files**
@@ -96,7 +96,7 @@ Create root `package.json`:
 
 ```json
 {
-  "name": "codex-ui-loop-mvp",
+  "name": "like-water",
   "private": true,
   "type": "module",
   "scripts": {
@@ -236,7 +236,7 @@ let dataDir;
 let app;
 
 beforeEach(async () => {
-  dataDir = await mkdtemp(path.join(tmpdir(), "ui-loop-"));
+  dataDir = await mkdtemp(path.join(tmpdir(), "like-water-"));
   app = createApp({
     dataDir,
     bridgeToken: "test-token",
@@ -524,7 +524,7 @@ Include exact commands:
 pnpm install
 cp .env.example .env
 pnpm dev:backend
-codex mcp add uiLoop -- node /Users/ryu/projects/AgenticProjects/LIKE-WATER/apps/mcp-bridge/src/index.mjs
+codex mcp add likeWater -- node /Users/ryu/projects/AgenticProjects/LIKE-WATER/apps/mcp-bridge/src/index.mjs
 ```
 
 State that iPad testing requires `PUBLIC_BASE_URL` to point at an HTTPS tunnel or LAN URL.
@@ -608,4 +608,3 @@ git status --short
 ```
 
 Expected: clean worktree.
-

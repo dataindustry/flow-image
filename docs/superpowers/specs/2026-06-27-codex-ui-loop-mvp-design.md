@@ -1,4 +1,4 @@
-# Codex Image Feedback Loop MVP Design (Simplified)
+# LikeWater MVP Design (Simplified)
 
 **Date:** 2026-06-27
 **Status:** Updated simplified MVP design
@@ -88,7 +88,7 @@ sequenceDiagram
 ## 5. Repository Structure
 
 ```text
-codex-ui-loop-mvp/
+like-water/
 ├─ README.md
 ├─ package.json
 ├─ pnpm-workspace.yaml

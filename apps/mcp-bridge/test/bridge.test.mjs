@@ -14,7 +14,7 @@ let tmp;
 let deps;
 
 beforeEach(async () => {
-  tmp = await mkdtemp(path.join(tmpdir(), "ui-loop-bridge-"));
+  tmp = await mkdtemp(path.join(tmpdir(), "like-water-bridge-"));
   deps = {
     backend: {
       createSession: vi.fn(),

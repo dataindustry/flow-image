@@ -15,7 +15,7 @@ let dataDir;
 let app;
 
 beforeEach(async () => {
-  dataDir = await mkdtemp(path.join(tmpdir(), "ui-loop-"));
+  dataDir = await mkdtemp(path.join(tmpdir(), "like-water-"));
   app = createApp({
     dataDir,
     bridgeToken: "test-token",
