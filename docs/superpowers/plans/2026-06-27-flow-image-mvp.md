@@ -77,7 +77,7 @@ Run:
 ```bash
 git init -b main
 git add docs/superpowers/specs docs/superpowers/plans
-git commit -m "docs: add codex ui loop design and plan"
+git commit -m "docs: add FlowImage design and plan"
 git switch -c feature/flow-image
 ```
 
@@ -86,7 +86,7 @@ Expected: repository exists on `feature/flow-image`. If `git commit` fails becau
 ```bash
 git config user.name "Codex"
 git config user.email "codex@example.local"
-git commit -m "docs: add codex ui loop design and plan"
+git commit -m "docs: add FlowImage design and plan"
 git switch -c feature/flow-image
 ```
 
@@ -524,7 +524,7 @@ Include exact commands:
 pnpm install
 cp .env.example .env
 pnpm dev:backend
-codex mcp add flow_image -- node /Users/ryu/projects/AgenticProjects/LIKE-WATER/apps/mcp-bridge/src/index.mjs
+codex mcp add flow_image -- node /Users/ryu/projects/AgenticProjects/like-water/flow-image/apps/mcp-bridge/src/index.mjs
 ```
 
 State that iPad testing requires `PUBLIC_BASE_URL` to point at an HTTPS tunnel or LAN URL.

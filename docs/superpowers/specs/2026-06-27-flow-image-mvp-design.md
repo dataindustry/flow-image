@@ -1,9 +1,9 @@
-# Codex Image Feedback Loop MVP Design (Simplified)
+# FlowImage MVP Design (Simplified)
 
 **Date:** 2026-06-27
-**Status:** Simplified MVP draft (round 3)
-**Workspace:** `/Users/ryu/projects/AgenticProjects/LIKE-WATER`
-**Relationship to prior drafts:** This is a leaner restatement of `2026-06-27-codex-ui-loop-mvp-design.md`. The original and the reviewed copies are kept unchanged. Design principle for this round: **meet the functional requirements with the least possible surface; subtract before adding.**
+**Status:** Updated simplified MVP design
+**Workspace:** `/Users/ryu/projects/AgenticProjects/like-water/flow-image`
+**Relationship to prior drafts:** This main design document has been simplified from the earlier 1025-line version after review of `2026-06-27-flow-image-mvp-design.simplified.md`. The `*.reviewed.md` and `*.simplified.md` files remain as review artifacts. Design principle for this round: **meet the functional requirements with the least possible surface; subtract before adding.**
 
 ## Scope decisions locked for this round
 
@@ -32,8 +32,8 @@ Multi-tenant hosting, accounts/permissions, native iPadOS/PencilKit, real-time c
 ## 3. Assumptions and Configuration
 
 - macOS with Codex Desktop and local Node.js. Single trusted operator.
-- The backend runs locally; the iPad reaches it via localhost, LAN, or a user-controlled HTTPS tunnel.
-- `viewer_url` is built from `PUBLIC_BASE_URL`, never hard-coded to `127.0.0.1`. For iPad/LAN/tunnel access `BIND_HOST` and `PUBLIC_BASE_URL` must be set together to a reachable address.
+- The backend runs locally. Desktop browsers can use localhost; iPad access uses LAN or a user-controlled HTTPS tunnel.
+- `viewer_url` is built from `PUBLIC_BASE_URL`, never hard-coded to `127.0.0.1`. For LAN access, `BIND_HOST` must be non-loopback and `PUBLIC_BASE_URL` must be reachable from the iPad. For a local tunnel agent on the same Mac, `BIND_HOST=127.0.0.1` is acceptable and safer.
 - Screenshots are PNG. Backend, viewer page, and files are same-origin.
 - Files are stored temporarily under the workspace and are secret-protected.
 
@@ -42,7 +42,7 @@ Configuration (env, in `.env.example`):
 | Variable | Default | Purpose |
 |---|---|---|
 | `PORT` | `3939` | HTTP port. |
-| `BIND_HOST` | `127.0.0.1` | Bind address. LAN/tunnel use requires `0.0.0.0`. |
+| `BIND_HOST` | `127.0.0.1` | Bind address. LAN use requires `0.0.0.0`; local tunnel agents may use `127.0.0.1`. |
 | `PUBLIC_BASE_URL` | `http://127.0.0.1:3939` | Base for `viewer_url`. Must be a reachable LAN/tunnel URL for iPad. |
 | `BRIDGE_TOKEN` | (required) | Shared secret required on `POST /api/sessions`. Held only by the MCP bridge. |
 
@@ -88,7 +88,7 @@ sequenceDiagram
 ## 5. Repository Structure
 
 ```text
-codex-ui-loop-mvp/
+flow-image/
 ├─ README.md
 ├─ package.json
 ├─ pnpm-workspace.yaml

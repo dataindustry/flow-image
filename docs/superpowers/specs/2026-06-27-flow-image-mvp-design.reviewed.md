@@ -1,15 +1,15 @@
-# Codex Image Feedback Loop MVP Design
+# FlowImage MVP Design (Reviewed Artifact)
 
 **Date:** 2026-06-27  
-**Status:** Draft for user review  
-**Workspace:** `/Users/ryu/projects/AgenticProjects/LIKE-WATER`  
-**Current repository state:** Empty directory, not a git repository at design time.
+**Status:** Reviewed design artifact  
+**Workspace:** `/Users/ryu/projects/AgenticProjects/like-water/flow-image`  
+**Current repository state:** Historical review artifact; implementation now lives in this FlowImage workspace.
 
 ---
 
 ## 审校意见汇总 (Review Notes)
 
-> 本文件是审校副本，由 Claude 于 2026-06-27 生成。原始文档 `2026-06-27-codex-ui-loop-mvp-design.md` 保持不变、未改动。下方正文中以引用块插入的 `[审校]` 段落即为修订意见，正文本身未删改。
+> 本文件是审校副本，由 Claude 于 2026-06-27 生成。当前主文档为 `2026-06-27-flow-image-mvp-design.md`。下方正文中以引用块插入的 `[审校]` 段落即为修订意见。
 >
 > **图例：** 🔴 严重（与核心用例冲突或存在安全风险，需在动工前解决）· 🟠 重要（建议在对应阶段优先处理）· 🟡 次要（可改进，风险较低）
 >
@@ -248,7 +248,7 @@ sequenceDiagram
 The planned repository structure is intentionally small:
 
 ```text
-codex-ui-loop-mvp/
+flow-image/
 ├─ README.md
 ├─ package.json
 ├─ pnpm-workspace.yaml
@@ -1003,4 +1003,3 @@ Mitigation:
 - MDN FormData: <https://developer.mozilla.org/en-US/docs/Web/API/FormData>
 - MDN WebSocket: <https://developer.mozilla.org/en-US/docs/Web/API/WebSocket>
 - Express Multer middleware: <https://expressjs.com/en/resources/middleware/multer.html>
-
