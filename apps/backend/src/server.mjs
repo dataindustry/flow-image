@@ -6,7 +6,7 @@ import { SessionStore } from "./lib/store.mjs";
 import { pairsRouter } from "./routes/pairs.mjs";
 import { sessionsRouter } from "./routes/sessions.mjs";
 import { screenshotsRouter } from "./routes/screenshots.mjs";
-import { annotationsRouter } from "./routes/annotations.mjs";
+import { annotationsRootRouter, annotationsRouter } from "./routes/annotations.mjs";
 import { filesRouter } from "./routes/files.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -24,6 +24,7 @@ export function createApp(overrides = {}) {
   app.use("/api/sessions", sessionsRouter({ config, store }));
   app.use("/api/sessions", screenshotsRouter({ store }));
   app.use("/api/sessions", annotationsRouter({ store }));
+  app.use("/api/annotations", annotationsRootRouter({ store }));
   app.use("/files", filesRouter({ store }));
   app.use(express.static(webPublicDir));
   app.get("/s/:sessionId", (req, res) => {

@@ -141,6 +141,92 @@ describe("public pairs", () => {
   });
 });
 
+describe("pair-scoped sessions", () => {
+  test("creates a public pair session without leaking a session secret", async () => {
+    const pair = await createPair();
+
+    const res = await request(app)
+      .post("/api/sessions")
+      .set("X-FlowImage-Pair-Code", pair.pair_code)
+      .send({ title: "Settings" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.session_id).toMatch(/^sess_20260627_[0-9a-f]{16}$/);
+    expect(res.body.session_secret).toBeUndefined();
+    expect(res.body.viewer_url).toBe(`https://example.test/s/${res.body.session_id}`);
+    expect(res.body.status).toBe("pending_annotation");
+    expect(res.body.expires_at).toBe("2026-07-04T10:00:00.000Z");
+  });
+
+  test("uploads screenshots with pair code and reads files with device token", async () => {
+    const pair = await createPair();
+    const session = await request(app)
+      .post("/api/sessions")
+      .set("X-FlowImage-Pair-Code", pair.pair_code)
+      .send({ title: "Settings" });
+
+    const upload = await request(app)
+      .post(`/api/sessions/${session.body.session_id}/screenshots`)
+      .set("X-FlowImage-Pair-Code", pair.pair_code)
+      .field("labels[]", "Settings page")
+      .attach("files[]", png1x1, { filename: "shot.png", contentType: "image/png" });
+
+    expect(upload.status).toBe(200);
+    expect(upload.body.items[0]).toMatchObject({
+      screenshot_id: "shot_0001",
+      label: "Settings page",
+      image_url: `/files/sessions/${session.body.session_id}/screenshots/shot_0001.png`
+    });
+
+    const ok = await request(app)
+      .get(`/files/sessions/${session.body.session_id}/screenshots/shot_0001.png`)
+      .set("X-Pair-Device-Token", pair.pair_device_token);
+    expect(ok.status).toBe(200);
+    expect(Buffer.from(ok.body)).toEqual(png1x1);
+
+    const otherPair = await createPair("Other iPad");
+    const denied = await request(app)
+      .get(`/files/sessions/${session.body.session_id}/screenshots/shot_0001.png`)
+      .set("X-Pair-Device-Token", otherPair.pair_device_token);
+    expect(denied.status).toBe(404);
+  });
+
+  test("uploads annotations with device token and collects ready pages with pair code", async () => {
+    const pair = await createPair();
+    const session = await request(app)
+      .post("/api/sessions")
+      .set("X-FlowImage-Pair-Code", pair.pair_code)
+      .send({ title: "Settings" });
+    const upload = await request(app)
+      .post(`/api/sessions/${session.body.session_id}/screenshots`)
+      .set("X-FlowImage-Pair-Code", pair.pair_code)
+      .attach("files[]", png1x1, { filename: "shot.png", contentType: "image/png" });
+    const screenshotId = upload.body.items[0].screenshot_id;
+
+    const annotation = await request(app)
+      .post(`/api/sessions/${session.body.session_id}/annotations/${screenshotId}`)
+      .set("X-Pair-Device-Token", pair.pair_device_token)
+      .attach("merged_png", png1x1, { filename: "merged.png", contentType: "image/png" });
+    expect(annotation.status).toBe(200);
+    expect(annotation.body.ready).toBe(true);
+
+    const collect = await request(app)
+      .post(`/api/sessions/${session.body.session_id}/annotations/collect`)
+      .set("X-FlowImage-Pair-Code", pair.pair_code);
+    expect(collect.status).toBe(200);
+    expect(collect.body.ready_count).toBe(1);
+    expect(collect.body.review_url).toBe(`https://example.test/s/${session.body.session_id}`);
+    expect(collect.body.items[0].merged_png_path).toMatch(/shot_0001-merged\.png$/);
+
+    const latest = await request(app)
+      .post("/api/annotations/collect-latest")
+      .set("X-FlowImage-Pair-Code", pair.pair_code);
+    expect(latest.status).toBe(200);
+    expect(latest.body.session_id).toBe(session.body.session_id);
+    expect(latest.body.ready_count).toBe(1);
+  });
+});
+
 describe("config", () => {
   test("default data dir is stable when backend runs from package cwd", () => {
     const originalCwd = process.cwd();

@@ -2,7 +2,7 @@ import express from "express";
 import multer from "multer";
 import { MAX_PNG_BYTES, MAX_SCREENSHOTS } from "../lib/config.mjs";
 import { parsePngMeta } from "../lib/png.mjs";
-import { requireSessionSecret } from "./sessions.mjs";
+import { requireSessionAccess } from "./sessions.mjs";
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -17,7 +17,7 @@ export function screenshotsRouter({ store }) {
 
   router.post(
     "/:sessionId/screenshots",
-    requireSessionSecret(store),
+    requireSessionAccess(store, { allowPairCode: true, allowLegacySecret: true }),
     upload.array("files[]", MAX_SCREENSHOTS),
     async (req, res) => {
       try {

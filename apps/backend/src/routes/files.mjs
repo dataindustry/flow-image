@@ -1,6 +1,6 @@
 import express from "express";
 import path from "node:path";
-import { requireSessionSecret } from "./sessions.mjs";
+import { requireSessionAccess } from "./sessions.mjs";
 
 const SAFE_KIND = new Set(["screenshots", "annotations"]);
 
@@ -19,7 +19,11 @@ export function filesRouter({ store }) {
 
   router.get(
     "/sessions/:sessionId/:kind/:fileName",
-    requireSessionSecret(store),
+    requireSessionAccess(store, {
+      allowPairCode: true,
+      allowDeviceToken: true,
+      allowLegacySecret: true
+    }),
     async (req, res) => {
       const { sessionId, kind, fileName } = req.params;
       if (hasUnsafeSegment(sessionId) || hasUnsafeSegment(kind) || hasUnsafeSegment(fileName)) {
@@ -31,8 +35,8 @@ export function filesRouter({ store }) {
         return;
       }
 
-      const root = path.resolve(store.dataDir);
-      const filePath = path.resolve(root, sessionId, kind, fileName);
+      const root = path.resolve(store.sessionDirFor(req.session));
+      const filePath = path.resolve(root, kind, fileName);
       if (!filePath.startsWith(`${root}${path.sep}`)) {
         res.status(400).json({ error: "bad_path" });
         return;
