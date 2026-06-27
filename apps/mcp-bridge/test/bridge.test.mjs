@@ -19,7 +19,9 @@ beforeEach(async () => {
     backend: {
       createSession: vi.fn(),
       uploadScreenshots: vi.fn(),
-      readyAnnotations: vi.fn()
+      readyAnnotations: vi.fn(),
+      collectAnnotations: vi.fn(),
+      collectLatestAnnotations: vi.fn()
     },
     readFile: vi.fn(async (filePath) => readFile(filePath))
   };
@@ -63,6 +65,34 @@ describe("publishScreenshots", () => {
     expect(result.structuredContent.uploaded_pages).toHaveLength(1);
     expect(result.content[0].text).toContain("do not modify code");
   });
+
+  test("supports public pair sessions without a session secret", async () => {
+    const filePath = path.join(tmp, "shot.png");
+    await writeFile(filePath, png1x1);
+    deps.backend.createSession.mockResolvedValue({
+      session_id: "sess_pair",
+      viewer_url: "https://flow-image.like-water.net/s/sess_pair",
+      status: "pending_annotation"
+    });
+    deps.backend.uploadScreenshots.mockResolvedValue({
+      count: 1,
+      items: [{ screenshot_id: "shot_0001", page_index: 1, label: "Settings" }]
+    });
+
+    const result = await publishScreenshots(
+      { session_title: "Settings", screenshot_paths: [filePath] },
+      deps
+    );
+
+    expect(deps.backend.uploadScreenshots).toHaveBeenCalledWith(
+      "sess_pair",
+      undefined,
+      [filePath],
+      []
+    );
+    expect(result.structuredContent.session_secret).toBeUndefined();
+    expect(result.content[0].text).toContain("paired iPad/Web app");
+  });
 });
 
 describe("collectAnnotations", () => {
@@ -99,5 +129,27 @@ describe("collectAnnotations", () => {
       data: png1x1.toString("base64")
     });
     expect(result.structuredContent.ready_count).toBe(1);
+  });
+
+  test("collects latest pair-mode annotations for review when session id is omitted", async () => {
+    const filePath = path.join(tmp, "merged.png");
+    await writeFile(filePath, png1x1);
+    deps.backend.collectLatestAnnotations.mockResolvedValue({
+      session_id: "sess_latest",
+      ready_count: 1,
+      review_url: "https://flow-image.like-water.net/s/sess_latest",
+      items: [{ page_index: 1, merged_png_path: filePath }]
+    });
+
+    const result = await collectAnnotations({}, deps);
+
+    expect(deps.backend.collectLatestAnnotations).toHaveBeenCalled();
+    expect(result.content[0].text).toContain("请先目视检查");
+    expect(result.content[0].text).toContain("https://flow-image.like-water.net/s/sess_latest");
+    expect(result.content[1]).toMatchObject({
+      type: "image",
+      mimeType: "image/png",
+      data: png1x1.toString("base64")
+    });
   });
 });

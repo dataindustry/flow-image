@@ -35,9 +35,11 @@ export async function publishScreenshots(args, deps = {}) {
     content: [
       {
         type: "text",
-        text:
-          `Created annotation session ${session.session_id} with ${uploaded.count} screenshot(s). ` +
-          `Open ${session.viewer_url} to annotate. do not modify code until annotations are collected.`
+        text: session.session_secret
+          ? `Created annotation session ${session.session_id} with ${uploaded.count} screenshot(s). ` +
+            `Open ${session.viewer_url} to annotate. do not modify code until annotations are collected.`
+          : `Created FlowImage pair session ${session.session_id} with ${uploaded.count} screenshot(s). ` +
+            `Open the paired iPad/Web app to annotate. do not modify code until annotations are collected and reviewed.`
       }
     ],
     structuredContent: {

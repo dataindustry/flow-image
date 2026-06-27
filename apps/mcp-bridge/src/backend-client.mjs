@@ -3,11 +3,19 @@ import path from "node:path";
 
 export class BackendClient {
   constructor({
-    baseUrl = process.env.PUBLIC_BASE_URL ?? "http://127.0.0.1:3939",
-    bridgeToken = process.env.BRIDGE_TOKEN
+    baseUrl = process.env.FLOWIMAGE_SERVER_URL ??
+      process.env.PUBLIC_BASE_URL ??
+      "http://127.0.0.1:3939",
+    bridgeToken = process.env.BRIDGE_TOKEN,
+    pairCode = process.env.FLOWIMAGE_PAIR_CODE
   } = {}) {
     this.baseUrl = baseUrl.replace(/\/$/, "");
     this.bridgeToken = bridgeToken;
+    this.pairCode = pairCode;
+  }
+
+  get isPairMode() {
+    return Boolean(this.pairCode);
   }
 
   async createSession({ title }) {
@@ -15,7 +23,9 @@ export class BackendClient {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-Bridge-Token": this.bridgeToken ?? ""
+        ...(this.isPairMode
+          ? { "X-FlowImage-Pair-Code": this.pairCode }
+          : { "X-Bridge-Token": this.bridgeToken ?? "" })
       },
       body: JSON.stringify({ title })
     });
@@ -31,7 +41,9 @@ export class BackendClient {
     }
     const res = await fetch(`${this.baseUrl}/api/sessions/${sessionId}/screenshots`, {
       method: "POST",
-      headers: { "X-Session-Secret": sessionSecret },
+      headers: this.isPairMode
+        ? { "X-FlowImage-Pair-Code": this.pairCode }
+        : { "X-Session-Secret": sessionSecret },
       body
     });
     return readJson(res);
@@ -40,6 +52,22 @@ export class BackendClient {
   async readyAnnotations(sessionId, sessionSecret) {
     const url = `${this.baseUrl}/api/sessions/${sessionId}/annotations/ready?secret=${encodeURIComponent(sessionSecret)}`;
     const res = await fetch(url);
+    return readJson(res);
+  }
+
+  async collectAnnotations(sessionId) {
+    const res = await fetch(`${this.baseUrl}/api/sessions/${sessionId}/annotations/collect`, {
+      method: "POST",
+      headers: { "X-FlowImage-Pair-Code": this.pairCode ?? "" }
+    });
+    return readJson(res);
+  }
+
+  async collectLatestAnnotations() {
+    const res = await fetch(`${this.baseUrl}/api/annotations/collect-latest`, {
+      method: "POST",
+      headers: { "X-FlowImage-Pair-Code": this.pairCode ?? "" }
+    });
     return readJson(res);
   }
 }
