@@ -4,6 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createApp } from "../src/server.mjs";
+import { makeConfig } from "../src/lib/config.mjs";
 
 const png1x1 = Buffer.from(
   "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000a49444154789c6360000002000150a0f53a0000000049454e44ae426082",
@@ -65,6 +66,20 @@ describe("sessions", () => {
     expect(ok.body.title).toBe("Settings");
     expect(ok.body.screenshots).toEqual([]);
     expect(ok.body.annotations).toEqual([]);
+  });
+});
+
+describe("config", () => {
+  test("default data dir is stable when backend runs from package cwd", () => {
+    const originalCwd = process.cwd();
+    const repoRoot = path.resolve(originalCwd, "../..");
+    process.chdir(path.resolve(repoRoot, "apps/backend"));
+    try {
+      const config = makeConfig({ bridgeToken: "x" });
+      expect(config.dataDir).toBe(path.resolve(repoRoot, "apps/backend/data/sessions"));
+    } finally {
+      process.chdir(originalCwd);
+    }
   });
 });
 
