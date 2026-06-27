@@ -241,6 +241,16 @@ describe("config", () => {
   });
 });
 
+describe("static security headers", () => {
+  test("serves the web app with a minimal content security policy", async () => {
+    const res = await request(app).get("/");
+
+    expect(res.status).toBe(200);
+    expect(res.headers["content-security-policy"]).toContain("default-src 'self'");
+    expect(res.headers["content-security-policy"]).toContain("img-src 'self' blob:");
+  });
+});
+
 async function createSession(title = "Settings") {
   const res = await request(app)
     .post("/api/sessions")

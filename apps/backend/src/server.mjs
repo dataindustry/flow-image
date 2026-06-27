@@ -19,6 +19,13 @@ export function createApp(overrides = {}) {
 
   app.locals.config = config;
   app.locals.store = store;
+  app.use((req, res, next) => {
+    res.setHeader(
+      "Content-Security-Policy",
+      "default-src 'self'; img-src 'self' blob:; style-src 'self'; script-src 'self'; connect-src 'self'"
+    );
+    next();
+  });
   app.use(express.json());
   app.use("/api/pairs", pairsRouter({ store }));
   app.use("/api/sessions", sessionsRouter({ config, store }));
