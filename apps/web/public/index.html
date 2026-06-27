@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Codex UI Loop</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="toolbar">
+        <button id="prevPage" type="button" aria-label="Previous page">Prev</button>
+        <output id="pageStatus">Page 0 / 0</output>
+        <button id="nextPage" type="button" aria-label="Next page">Next</button>
+        <button id="brushTool" type="button" data-tool="brush">Brush</button>
+        <button id="eraserTool" type="button" data-tool="eraser">Eraser</button>
+        <label>
+          Color
+          <input id="colorInput" type="color" value="#ff3040" />
+        </label>
+        <label>
+          Width
+          <input id="widthInput" type="range" min="2" max="18" value="5" />
+        </label>
+        <button id="submitPage" type="button">Submit</button>
+        <output id="saveStatus">Loading</output>
+      </header>
+      <section class="stage" aria-label="Annotation canvas">
+        <img id="baseImage" alt="Screenshot to annotate" />
+        <canvas id="drawCanvas"></canvas>
+      </section>
+    </main>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

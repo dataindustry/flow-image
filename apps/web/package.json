@@ -1,0 +1,10 @@
+{
+  "name": "web",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run --environment jsdom"
+  },
+  "devDependencies": {
+    "jsdom": "^25.0.1"
+  }
+}
