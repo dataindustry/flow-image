@@ -1,0 +1,12 @@
+{
+  "name": "mcp-bridge",
+  "type": "module",
+  "scripts": {
+    "dev": "node src/index.mjs",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.17.4",
+    "form-data": "^4.0.1"
+  }
+}
