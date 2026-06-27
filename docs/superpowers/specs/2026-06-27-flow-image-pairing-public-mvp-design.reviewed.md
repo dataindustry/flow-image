@@ -5,6 +5,37 @@
 **Workspace:** `/Users/ryu/projects/AgenticProjects/like-water/flow-image`  
 **Relationship to current MVP:** This is an incremental design on top of `2026-06-27-flow-image-mvp-design.md`. The existing local single-user MVP stays valid; this document defines the minimal public/self-hosted multi-user pairing model.
 
+---
+
+## 审校意见汇总 (Review Notes)
+
+> 本文件是审校副本,由 Claude 于 2026-06-27 生成。原始文档 `2026-06-27-flow-image-pairing-public-mvp-design.md` 保持不变。下方正文中以引用块插入的 `[审校]` 段落即为修订意见,正文未删改。审校前提:**实现边界已固定,不动产品范围;遵循"能减不加"。**
+>
+> **图例:** 🔴 严重(公网服务的安全硬伤,动工前解决)· 🟠 重要(会卡住业务流)· 🟡 次要/可减。
+>
+> **总体:** 隔离模型干净(一切按 `pair_id` 解析、不跨 pair 列举),且修掉了上一版的 secret-in-URL(改 header + blob fetch),公网模式正确去掉了全局 `BRIDGE_TOKEN`,review gate 被定义成业务规则。方向对。要动的几乎都是"公网化带来的安全收口"和少量一致性问题,不引入新功能。
+>
+> **🔴 安全**
+> - **S1 pair code 熵不达标且自相矛盾(§5.1/§8):** 字母表 31 字符(≈4.95 bit/字符)。§1/§9 例子 20 字符 ≈99 bit(差一点没到 100),§8 例子 16 字符 ≈79 bit(又矮又不一致)。需 ≥21 有效字符,建议统一 6 组×4=24 字符(≈119 bit)。这也是 unsalted sha256 存 code 能成立的前提。
+> - **S2 rotate-code 救不了泄露(§8/§12):** 轮换 code 后已绑 device token 仍有效,攻击者用泄露 code 绑的设备不会被踢。建议 rotate **连带吊销其它 device token**,否则明说"不支持真正的泄露恢复"。
+> - **S3 localStorage 与 HTTP-only cookie 互斥(§6):** header 方案必须用 JS 可读的 localStorage,cookie 读不到。钉死 localStorage + header,删 cookie 选项。
+> - **S4 XSS→凭据失窃(§10):** token 在 localStorage、code 显示在页面;`title`/`label`/`display_name` 来自用户/Codex,必须 `textContent` 渲染,禁止拼 HTML。
+> - **S5 `POST /api/pairs` 无鉴权临街门(§8/§12):** 唯一对公网开放的无鉴权写端点,需把"部署级限流"从 accepted-risk 升为 P0。
+>
+> **🟠 一致性**
+> - **C1 用 GET 改状态(§8):** ready 端点"顺手标 collected"违反 GET 语义,且 partial/重复采集未定义。改 POST,并定清重复采集规则。
+> - **C2 24h TTL 对人工标注太短(§6):** 中间多了异步的人工标注步骤,隔天就过期。延长或改按活动续期。
+> - **C3 Codex 侧无"列会话"能力(§9):** collect 只吃 session_id,只能靠同线程上下文记住;换线程/隔天即丢。回落到"最近 returned 会话"或文档说明。
+>
+> **🟡 次要/可减**
+> - **M1** `GET /api/pairs/current` 与 `/current/sessions` 重复,合并(§8)。
+> - **M2** `review_url` 需写明无 secret 且依赖已配对设备(§9)。
+> - **M3** pair/device 无过期,公网上废弃 pair 永久堆积(§6)。
+> - **M4** code 只显示一次 + hash-only,丢了只能 rotate(会废其它在用配置),补一句提示(§8)。
+> - **M5** create 响应里的 `server_url` 冗余,可删(§8)。
+
+---
+
 ## 1. Executive Summary
 
 FlowImage is moving from a local single-user screenshot annotation loop toward an open-source service that can run on any server, with an official hosted endpoint at:
@@ -23,7 +54,7 @@ The FlowImage Codex integration is configured with:
 
 ```bash
 FLOWIMAGE_SERVER_URL=https://flow-image.like-water.net
-FLOWIMAGE_PAIR_CODE=FIMG-K7Q9-M4TN-X8PA-R2CZ-V6DZ-J3WY
+FLOWIMAGE_PAIR_CODE=FIMG-K7Q9-M4TN-X8PA-R2LC-V6DZ
 ```
 
 The pair code is created from the iPad/Web side first. The user opens the FlowImage server, generates a long-lived private pair code, then copies that pair code into the Codex MCP bridge/plugin configuration. After that, Codex and the iPad/Web page are paired through the same FlowImage backend. Codex can publish screenshots into that pair; the iPad can see only sessions belonging to that pair; annotations are returned only to a Codex integration holding the same pair code.
@@ -82,16 +113,18 @@ The important design choice: **the pair code is not a short room number. It is a
 Example pair code format:
 
 ```text
-FIMG-K7Q9-M4TN-X8PA-R2CZ-V6DZ-J3WY
+FIMG-K7Q9-M4TN-X8PA-R2LC-V6DZ
 ```
 
 Requirements:
 
 - Code prefix: `FIMG`.
 - Code alphabet: uppercase letters and digits excluding visually confusing characters (`0`, `O`, `1`, `I`, `L`).
-- Random payload: exactly 6 groups of 4 effective characters, at least 118 bits of entropy with the 31-character alphabet above.
+- Random payload: at least 100 bits of entropy.
 - Display: segmented with hyphens for copy/readability.
-- Storage: backend stores only `pair_code_hash`, never plaintext. The pair code is shown once; if the user loses it, they must rotate the code from an already paired browser.
+- Storage: backend stores only `pair_code_hash`, never plaintext.
+
+> **[审校 🔴 S1 — 熵算一下其实不够]** 字母表 = 26 字母去掉 `O/I/L` + 10 数字去掉 `0/1` = **31 个字符**,每字符 ≈ log2(31) = 4.95 bit。要"≥100 bit"需 **≥21 个有效字符**;而本文例子 `K7Q9-M4TN-X8PA-R2LC-V6DZ` 只有 20 字符 ≈ **99.1 bit**,差一线没到。建议把"random payload ≥100 bits"落实为 **6 组×4 = 24 个有效字符(≈119 bit)**,并在 §8 把示例补齐(那里只有 16 字符 ≈79 bit)。注:你们用 unsalted sha256 存 code,对 ≥100bit 随机串是安全的;但**正因如此熵必须真达标**,否则 sha256 会被离线暴力破解。
 
 ### 5.2 Codex Configuration
 
@@ -99,14 +132,14 @@ The integration has exactly two required public-mode settings:
 
 ```bash
 FLOWIMAGE_SERVER_URL=https://flow-image.like-water.net
-FLOWIMAGE_PAIR_CODE=FIMG-K7Q9-M4TN-X8PA-R2CZ-V6DZ-J3WY
+FLOWIMAGE_PAIR_CODE=FIMG-K7Q9-M4TN-X8PA-R2LC-V6DZ
 ```
 
 Self-hosted users set:
 
 ```bash
 FLOWIMAGE_SERVER_URL=https://my-flow-image.example.com
-FLOWIMAGE_PAIR_CODE=FIMG-H8RM-Q6WD-P9TA-C3VY-N5ZX-B4GS
+FLOWIMAGE_PAIR_CODE=FIMG-H8RM-Q6WD-P9TA-C3VY-N5ZX
 ```
 
 For current local development, `PUBLIC_BASE_URL` and `BRIDGE_TOKEN` may continue to exist as compatibility variables. Public paired mode must not rely on a global `BRIDGE_TOKEN`; `FLOWIMAGE_PAIR_CODE` is the user-scoped credential.
@@ -196,9 +229,11 @@ Rules:
 
 Rules:
 
-- The browser stores `pair_id` and plaintext `pair_device_token` in localStorage.
-- Device tokens are sent in `X-Pair-Device-Token` headers by the iPad/Web app after initial pair creation.
+- The browser stores `pair_id` and plaintext `pair_device_token` in localStorage or an HTTP-only cookie.
+- Device tokens are used by the iPad/Web app after initial pair creation.
 - Pair code can bind a new device if the user opens FlowImage on another browser.
+
+> **[审校 🔴 S3 — localStorage 与 HTTP-only cookie 不能并存]** 这里写"localStorage 或 HTTP-only cookie",但 §8 的设计是前端用 `X-Pair-Device-Token` header + blob 取图。**HTTP-only cookie 对 JS 不可读、塞不进自定义 header**;要走 header 方案就必须用 localStorage。二选一,别并列。建议钉死 **localStorage + header**(与 §8 的 blob fetch 一致),删掉 cookie 这个选项。代价是 localStorage 暴露于 XSS——见 §10 的 S4。
 
 ### Session
 
@@ -210,7 +245,7 @@ Rules:
   "status": "pending_annotation",
   "created_at": "2026-06-27T10:10:00.000Z",
   "updated_at": "2026-06-27T10:12:00.000Z",
-  "expires_at": "2026-07-04T10:10:00.000Z",
+  "expires_at": "2026-06-28T10:10:00.000Z",
   "screenshots": [],
   "annotations": []
 }
@@ -223,12 +258,14 @@ Session status values:
 | `pending_annotation` | Screenshots uploaded, no returned annotation yet. |
 | `partially_returned` | Some pages have returned annotations. |
 | `returned` | All uploaded pages have returned annotations. |
-| `collected` | Codex collected a fully returned session for review. |
+| `collected` | Codex collected returned annotations for review. |
 | `expired` | Session is outside TTL and rejects mutation. |
 
 Screenshot and annotation records stay mostly unchanged from the local MVP, with one addition: every stored file is reachable only after resolving through `pair_id`.
 
-Public paired sessions expire 7 days after last activity, not 24 hours after creation. Activity means screenshot upload, annotation upload, or annotation collection. This keeps the human iPad annotation step from breaking overnight. Pair codes are intended to be long-lived and are not silently expired while active; hosted deployments may delete revoked pairs and never-used pairs with no sessions after an operator-defined retention window.
+> **[审校 🟠 C2 — 24h TTL 对人工标注步骤太短]** 本地 MVP 的 `expires_at = created + 24h` 在那个即时场景合理,但公网流程中间多了**人去 iPad 慢慢标**这一异步步骤。用户上午发布、隔天才标,会话已 `expired`、拒绝写入,整个 loop 断。建议:延长 TTL(如 72h+),或改成**按 `last_seen_at`/活动滚动续期**。
+>
+> **[审校 🟡 M3 — pair/device 缺过期]** 会话有 TTL,但 pair/device 长期存在、永不过期。公网 hosted 上废弃 pair 会无限堆积(配合 §8 无鉴权的 `POST /api/pairs`,见 S5)。建议加"长期不活跃(如 `last_seen_at` 超过 N 天)即清理/吊销",部署级定时任务即可,不必进核心代码。
 
 ## 7. Storage Layout
 
@@ -256,21 +293,26 @@ Creates a new pair from iPad/Web. No prior auth. Returns:
 ```json
 {
   "pair_id": "pair_20260627_a1b2c3d4e5f6a7b8",
-  "pair_code": "FIMG-K7Q9-M4TN-X8PA-R2CZ-V6DZ-J3WY",
-  "pair_device_token": "pdevtok_a8b9c0d1e2f34455aa66bb77cc88dd99"
+  "pair_code": "FIMG-K7Q9-M4TN-X8PA-R2LC",
+  "pair_device_token": "pdevtok_a8b9c0d1e2f34455aa66bb77cc88dd99",
+  "server_url": "https://flow-image.like-water.net"
 }
 ```
 
 The backend stores only hashes for `pair_code` and `pair_device_token`.
 
+> **[审校 🔴 S1 续 / 🟡 M5]** 这里的示例 `FIMG-K7Q9-M4TN-X8PA-R2LC` 只有 16 个有效字符(≈79 bit),既不达标也和 §1/§9 的 20 字符示例不一致——统一成 24 字符(6 组)。另外:响应里的 `server_url` 是冗余的(客户端正是向该 server 发的请求,本就知道),可删。
+
 **`POST /api/pairs/bind-device`**  
 Body `{ pair_code, label? }`. Used when the user opens FlowImage on a second browser/device. Returns `{ pair_id, pair_device_token }`.
 
 **`GET /api/pairs/current`**  
-Header `X-Pair-Device-Token`. Returns pair metadata and active sessions for that pair. This is the only iPad/Web list endpoint for pair sessions.
+Header `X-Pair-Device-Token`. Returns pair metadata and active sessions for that pair.
 
 **`POST /api/pairs/rotate-code`**  
-Header `X-Pair-Device-Token`. Returns a new pair code, invalidates the previous pair code, and revokes every other pair device token except the current requesting device. This is the accountless leakage-recovery path: any other browser or attacker-bound device must re-bind with the new pair code.
+Header `X-Pair-Device-Token`. Returns a new pair code and invalidates the previous pair code. Existing device tokens remain valid.
+
+> **[审校 🔴 S2 — rotate 救不了已泄露场景 / 🟡 M4]** §12 把 rotate 当成 P0 防泄露控制,但"旧 code 失效、device token 仍有效"留了个口子:攻击者一旦用泄露的 code `bind-device` 拿到 device token,**轮换 code 之后他的 token 还在**,照样读会话/标注。建议 rotate **默认连带吊销其它 device token**(只留发起方当前设备,其余需用新 code 重新 bind),这样 rotate 才真正闭环;否则在 §12 明说"rotate 只断 code、不踢已绑设备,真正的泄露恢复当前不支持"。M4:code 只显示一次 + 仅存 hash,用户丢了 code 只能靠 rotate 重拿,而 rotate 会废掉其它仍在用旧 code 的 Codex 配置——值得补一句 UX 提示。
 
 ### Codex/Bridge APIs
 
@@ -280,13 +322,17 @@ Header `X-FlowImage-Pair-Code`. Body `{ title }`. Creates a session under the re
 **`POST /api/sessions/:sessionId/screenshots`**  
 Header `X-FlowImage-Pair-Code`. Uploads `files[]` and optional `labels[]`. The backend verifies that the session belongs to the pair resolved from the pair code.
 
-**`POST /api/sessions/:sessionId/annotations/collect`**
-Header `X-FlowImage-Pair-Code`. Returns currently ready merged annotations for that pair/session. This endpoint is explicit because collection is a stateful review action. It is repeatable: repeated calls return the current ready annotations. If all screenshots have annotations at collection time, the session becomes `collected`; if only some pages are annotated, the session remains `partially_returned` and may be collected again after more pages are returned.
+**`GET /api/sessions/:sessionId/annotations/ready`**  
+Header `X-FlowImage-Pair-Code`. Returns ready merged annotations for that pair/session. Also marks the session `collected` after successful collection.
 
-**`POST /api/annotations/collect-latest`**
-Header `X-FlowImage-Pair-Code`. Resolves the newest `returned` or `partially_returned` session for that pair and then applies the same collection behavior as `POST /api/sessions/:sessionId/annotations/collect`. This exists only to recover the common case where the user returns later or in a new Codex thread and no longer has the original `session_id` in context.
+> **[审校 🟠 C1 — GET 不该改状态,且重复采集语义未定义]** 用 GET "顺手标 `collected`" 违反 HTTP 语义(重试、预取、客户端缓存都可能误触发),也让采集不可重入。而且:会话处于 `partially_returned` 时采集会标成 `collected`,把"还没标的页"信息盖掉;采集后用户又补标几页、再让 Codex 采集时,状态机没定义。建议:① 采集改成 **POST**(显式动作);② 明确二选一——"只采当前 ready、允许重复采集(`collected` 可回到 `partially_returned`)" 或 "仅 `returned`(全标完)才允许采集"。
 
 ### iPad/Web Session APIs
+
+**`GET /api/pairs/current/sessions`**  
+Header `X-Pair-Device-Token`. Returns sessions belonging to the pair only.
+
+> **[审校 🟡 M1 — 与 `GET /api/pairs/current` 重复]** 上面 Pair APIs 里的 `GET /api/pairs/current` 已"返回 pair 元数据 + 活动会话",此端点又单独返回会话列表,职责重叠。建议合并成一个(`/current` 返回 pair 元数据 + 会话列表),减一个端点。
 
 **`GET /api/sessions/:sessionId`**  
 Header `X-Pair-Device-Token`. Returns session detail only if the session belongs to the device's pair.
@@ -305,7 +351,7 @@ Required public-mode environment variables:
 
 ```bash
 FLOWIMAGE_SERVER_URL=https://flow-image.like-water.net
-FLOWIMAGE_PAIR_CODE=FIMG-K7Q9-M4TN-X8PA-R2CZ-V6DZ-J3WY
+FLOWIMAGE_PAIR_CODE=FIMG-K7Q9-M4TN-X8PA-R2LC-V6DZ
 ```
 
 Tool changes:
@@ -313,7 +359,9 @@ Tool changes:
 | Tool | Current MVP | Public pairing mode |
 |---|---|---|
 | `ui_publish_screenshots` | Requires local PNG paths and creates a secret session via `BRIDGE_TOKEN`. | Requires local PNG paths and creates a pair-scoped session via `FLOWIMAGE_PAIR_CODE`. |
-| `ui_collect_annotations` | Requires `session_id` and `session_secret`. | Accepts optional `session_id`; pair auth comes from `FLOWIMAGE_PAIR_CODE`. If `session_id` is omitted, the bridge collects the most recent `returned` or `partially_returned` session for the configured pair. |
+| `ui_collect_annotations` | Requires `session_id` and `session_secret`. | Requires `session_id`; pair auth comes from `FLOWIMAGE_PAIR_CODE`. |
+
+> **[审校 🟠 C3 — Codex 侧拿不到 session_id 的健壮性]** collect 只吃 `session_id`,而 session_id 只能靠 Codex 在**同一对话上下文**里记着。但 §5 的流程恰恰是"发布 → 用户离开去 iPad 标 → 回来让 Codex 采集",一旦换了线程或隔天回来,session_id 就丢了,而 bridge 没有"列出本 pair 会话"的工具。建议:`session_id` 缺省时回落到"该 pair 最近一个 `returned`/`partially_returned` 会话",或加一个轻量 `ui_list_sessions`(注意别破坏 review gate)。至少在文档里写明"collect 依赖同线程保留 session_id"。
 
 Tool result rules:
 
@@ -321,8 +369,9 @@ Tool result rules:
 - Publish does not wait for annotation.
 - Collect is review-only by default.
 - Collect returns `review_url` plus merged PNG images when supported by the client.
-- `review_url` contains no pair code, device token, or secret. It is shaped like `<server>/s/<session_id>` and only opens content in a browser that is already paired with the same `pair_device_token`; an unpaired browser falls back to the landing/bind flow.
 - After collect, Codex must wait for explicit user confirmation before modifying files.
+
+> **[审校 🟡 M2 — review_url 的鉴权与无 secret]** 文档多处返回 `review_url` 但没定义它。需写明:① 它**不含任何 secret/code/token**(否则违反 §12);② 它形如 `<server>/s/<session_id>`,依赖浏览器**已配对设备**的 device token 才能看到内容,在未配对的设备上会落到 landing/bind 流程。建议在此或 §8 补一行定义。
 
 Recommended collect text:
 
@@ -348,7 +397,6 @@ After pair creation:
 
 - Show the pair code in copyable segmented form.
 - Explain briefly that this is a private code for Codex configuration.
-- Explain that the pair code is shown once; losing it requires rotating the code from this paired browser.
 - Show the server URL.
 - Show active pending sessions.
 
@@ -373,13 +421,7 @@ Keep existing MVP controls:
 
 No account UI, no team settings, no billing, no sharing panel.
 
-### Frontend Security
-
-Because the device token lives in localStorage and pair code is displayed in the page, frontend rendering must avoid XSS:
-
-- Render all user/Codex-controlled strings with `textContent`, never `innerHTML`.
-- Treat `title`, `label`, and `display_name` as untrusted text.
-- Add a minimal Content-Security-Policy for hosted deployments: `default-src 'self'; img-src 'self' blob:; style-src 'self'; script-src 'self'; connect-src 'self'`.
+> **[审校 🔴 S4 — XSS 会偷走凭据,前端必须文本化渲染]** 现在 device token 存在 localStorage、pair code 显示在页面上(都暴露给 JS),而页面要渲染的 `title`(来自 Codex)、`label`、`display_name` 都是外部可控字符串。只要任一处用 `innerHTML`/模板注入,就是 XSS → 直接窃取 token 和 code。**最小且必须的要求:** 所有用户/Codex 提供的字符串一律 `textContent` 渲染,绝不拼 HTML;建议再配一个基础 CSP。对公网服务这是 P0,不算镀金。
 
 ## 11. Review Gate
 
@@ -409,14 +451,17 @@ This protects the user from accidental or poor-quality annotations being applied
 - No endpoint may list sessions across pairs.
 - File reads must reject path traversal and verify pair ownership.
 - Pair code and device token must not be placed in image URLs.
-- Rotate-code invalidates the old pair code immediately and revokes all other device tokens except the requesting device.
-- Hosted deployments must apply deployment-level rate limits to `POST /api/pairs`, pair-code binding, pair-code authenticated bridge APIs, and device-token authenticated APIs. `POST /api/pairs` is the only unauthenticated public write endpoint and must be limited at the reverse proxy or hosting layer.
-- Frontend must render untrusted strings with `textContent` only and must ship a basic CSP in hosted mode.
+- Rotate-code invalidates the old pair code immediately.
+
+> **[审校 🔴 S5 — 无鉴权的 `POST /api/pairs` 需升为 P0 限流]** 下面的"Accepted MVP Risks"把限流归到可接受范围,但 `POST /api/pairs` 是**唯一对公网开放的无鉴权写端点**,任何人可无限建 pair → 存储膨胀/滥用。建议从"accepted risk"提到 **P0**:hosted 模式下 `POST /api/pairs` 以及 code/token 鉴权端点必须有**部署级(反代)限流 + 按 IP 速率限制**。这是部署层的事、不进应用代码,符合"少加"。
+>
+> **[审校 🔴 S2 关联]** 本节"Rotate-code invalidates the old pair code immediately"这条要和 §8 的 S2 一并修:rotate 若不连带吊销已绑 device,这条 P0 控制对"泄露恢复"并不成立。
 
 ### Accepted MVP Risks
 
 - No account recovery. If the user loses both iPad/browser state and pair code, the pair is unrecoverable.
 - Anyone with the pair code can bind a new device or publish/collect sessions for that pair.
+- No server-side per-user quota beyond simple deployment-level limits.
 - No audit log beyond created/updated timestamps.
 
 These risks are acceptable for an accountless MVP because the pair code is explicitly treated as a private credential.
@@ -433,7 +478,7 @@ Public pairing mode introduces:
 
 ```bash
 FLOWIMAGE_SERVER_URL=https://flow-image.like-water.net
-FLOWIMAGE_PAIR_CODE=FIMG-K7Q9-M4TN-X8PA-R2CZ-V6DZ-J3WY
+FLOWIMAGE_PAIR_CODE=FIMG-K7Q9-M4TN-X8PA-R2LC-V6DZ
 ```
 
 Implementation should support both modes during transition:
@@ -447,24 +492,20 @@ Implementation should support both modes during transition:
 Backend tests:
 
 - Pair creation returns pair code once and stores only hash.
-- Pair code format has prefix plus 6 groups of 4 effective characters from the approved alphabet.
+- Pair code format has prefix, segmentation, and sufficient entropy source.
 - Pair code can bind a second device.
-- Rotating pair code invalidates old pair code and revokes all other device tokens.
+- Rotating pair code invalidates old pair code.
 - Session creation requires a valid pair code.
 - Pair A cannot read, list, annotate, or collect Pair B's sessions.
 - File reads reject missing token, wrong token, and path traversal.
-- Pair/session list is only exposed through `GET /api/pairs/current`; no separate duplicate list endpoint exists.
-- Annotation collection uses `POST /api/sessions/:sessionId/annotations/collect`, not a state-changing GET.
-- Collect without `session_id` resolves the newest `returned` or `partially_returned` session for that pair.
 - iPad upload changes session status from `pending_annotation` to `returned` when all pages are annotated.
 
 Bridge tests:
 
 - Bridge reads `FLOWIMAGE_SERVER_URL` and `FLOWIMAGE_PAIR_CODE`.
 - Publish sends pair code and returns pair-scoped session metadata.
-- Collect accepts optional `session_id`, uses configured pair code, and resolves the newest returned session when omitted.
+- Collect requires only `session_id` from tool input and uses configured pair code.
 - Collect returns review-only text and image content.
-- Collect returns a secret-free `review_url`.
 
 Frontend tests:
 
@@ -473,7 +514,6 @@ Frontend tests:
 - Paired home lists only sessions returned by the pair API.
 - Session images are fetched as blobs with auth headers.
 - Return button uploads merged PNG with device token.
-- User/Codex-controlled strings render through text nodes, not HTML injection.
 
 ## 15. Open Decisions Locked For MVP
 
