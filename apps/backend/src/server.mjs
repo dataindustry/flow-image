@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { makeConfig } from "./lib/config.mjs";
 import { SessionStore } from "./lib/store.mjs";
+import { pairsRouter } from "./routes/pairs.mjs";
 import { sessionsRouter } from "./routes/sessions.mjs";
 import { screenshotsRouter } from "./routes/screenshots.mjs";
 import { annotationsRouter } from "./routes/annotations.mjs";
@@ -19,6 +20,7 @@ export function createApp(overrides = {}) {
   app.locals.config = config;
   app.locals.store = store;
   app.use(express.json());
+  app.use("/api/pairs", pairsRouter({ store }));
   app.use("/api/sessions", sessionsRouter({ config, store }));
   app.use("/api/sessions", screenshotsRouter({ store }));
   app.use("/api/sessions", annotationsRouter({ store }));

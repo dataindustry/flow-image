@@ -1,6 +1,6 @@
 import { describe, expect, test, beforeEach, afterEach } from "vitest";
 import request from "supertest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createApp } from "../src/server.mjs";
@@ -66,6 +66,78 @@ describe("sessions", () => {
     expect(ok.body.title).toBe("Settings");
     expect(ok.body.screenshots).toEqual([]);
     expect(ok.body.annotations).toEqual([]);
+  });
+});
+
+async function createPair(label = "iPad Safari") {
+  const res = await request(app).post("/api/pairs").send({ label });
+  expect(res.status).toBe(200);
+  return res.body;
+}
+
+describe("public pairs", () => {
+  test("creates a pair with a long one-time pair code and stores only hashes", async () => {
+    const pair = await createPair();
+
+    expect(pair.pair_id).toMatch(/^pair_20260627_[0-9a-f]{16}$/);
+    expect(pair.pair_code).toMatch(
+      /^FIMG-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/
+    );
+    expect(pair.pair_device_token).toMatch(/^pdevtok_[A-Za-z0-9_-]{32,}$/);
+
+    const pairJson = await readFile(
+      path.join(dataDir, "pairs", pair.pair_id, "pair.json"),
+      "utf8"
+    );
+    expect(pairJson).not.toContain(pair.pair_code);
+    expect(pairJson).toContain("pair_code_hash");
+  });
+
+  test("binds another device with pair code and lists only current pair sessions", async () => {
+    const pair = await createPair();
+    const bound = await request(app)
+      .post("/api/pairs/bind-device")
+      .send({ pair_code: pair.pair_code, label: "Mac Safari" });
+
+    expect(bound.status).toBe(200);
+    expect(bound.body.pair_id).toBe(pair.pair_id);
+    expect(bound.body.pair_device_token).toMatch(/^pdevtok_/);
+
+    const current = await request(app)
+      .get("/api/pairs/current")
+      .set("X-Pair-Device-Token", bound.body.pair_device_token);
+
+    expect(current.status).toBe(200);
+    expect(current.body.pair_id).toBe(pair.pair_id);
+    expect(current.body.sessions).toEqual([]);
+  });
+
+  test("rotating a pair code revokes other devices and old code", async () => {
+    const pair = await createPair();
+    const bound = await request(app)
+      .post("/api/pairs/bind-device")
+      .send({ pair_code: pair.pair_code, label: "Second browser" });
+    expect(bound.status).toBe(200);
+
+    const rotated = await request(app)
+      .post("/api/pairs/rotate-code")
+      .set("X-Pair-Device-Token", pair.pair_device_token);
+
+    expect(rotated.status).toBe(200);
+    expect(rotated.body.pair_code).toMatch(
+      /^FIMG-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/
+    );
+    expect(rotated.body.pair_code).not.toBe(pair.pair_code);
+
+    const oldCode = await request(app)
+      .post("/api/pairs/bind-device")
+      .send({ pair_code: pair.pair_code, label: "Old code" });
+    expect(oldCode.status).toBe(403);
+
+    const revokedDevice = await request(app)
+      .get("/api/pairs/current")
+      .set("X-Pair-Device-Token", bound.body.pair_device_token);
+    expect(revokedDevice.status).toBe(403);
   });
 });
 
