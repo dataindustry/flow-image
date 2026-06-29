@@ -401,6 +401,32 @@ describe("static frontend assets", () => {
 });
 
 describe("config", () => {
+  test("defaults development server to a LAN bind address with a usable public URL", () => {
+    const config = makeConfig({
+      env: {},
+      lanAddress: () => "192.168.2.72"
+    });
+
+    expect(config.bindHost).toBe("0.0.0.0");
+    expect(config.publicBaseUrl).toBe("http://192.168.2.72:3939");
+  });
+
+  test("uses HTTPS public URLs when certificate paths are configured", () => {
+    const config = makeConfig({
+      env: {
+        HTTPS_CERT_PATH: ".certs/flowimage.pem",
+        HTTPS_KEY_PATH: ".certs/flowimage-key.pem"
+      },
+      lanAddress: () => "192.168.2.72"
+    });
+
+    expect(config.https).toEqual({
+      certPath: ".certs/flowimage.pem",
+      keyPath: ".certs/flowimage-key.pem"
+    });
+    expect(config.publicBaseUrl).toBe("https://192.168.2.72:3939");
+  });
+
   test("default data dir is stable when backend runs from package cwd", () => {
     const originalCwd = process.cwd();
     const repoRoot = path.resolve(originalCwd, "../..");

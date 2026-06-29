@@ -4,8 +4,11 @@
   "type": "module",
   "scripts": {
     "test": "pnpm -r test && node --test plugins/flow-image/test/*.test.mjs",
+    "cert:local": "bash scripts/create-local-cert.sh",
     "dev:check": "bash scripts/check-dev-server.sh",
-    "dev:backend": "pnpm --filter backend dev",
+    "dev:backend": "BIND_HOST=0.0.0.0 pnpm --filter backend dev",
+    "dev:lan": "BIND_HOST=0.0.0.0 pnpm --filter backend dev",
+    "dev:https": "BIND_HOST=0.0.0.0 HTTPS_CERT_PATH=${HTTPS_CERT_PATH:-.certs/flowimage.pem} HTTPS_KEY_PATH=${HTTPS_KEY_PATH:-.certs/flowimage-key.pem} pnpm --filter backend dev",
     "dev:mcp": "pnpm --filter mcp-bridge dev"
   },
   "devDependencies": {

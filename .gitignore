@@ -1,5 +1,6 @@
 node_modules/
 .env
+.certs/
 apps/backend/data/
 coverage/
 dist/

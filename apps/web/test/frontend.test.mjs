@@ -24,6 +24,7 @@ import {
   releaseObjectUrl,
   canCopyPngToClipboard,
   copyPngBlobToClipboard,
+  copyOrDownloadPngBlob,
   copyTextToClipboard,
   shareRouteFromPath,
   createRootIdempotencyKey,
@@ -304,6 +305,54 @@ describe("clipboard helpers", () => {
     await expect(
       copyPngBlobToClipboard(blob, { write: async () => {} }, class ClipboardItem {}, false)
     ).rejects.toThrow("Clipboard needs HTTPS");
+  });
+
+  test("downloads the PNG when browser security blocks image clipboard writes", async () => {
+    const clicks = [];
+    const revoked = [];
+    const anchors = [];
+    const doc = {
+      body: {
+        appendChild(node) {
+          anchors.push(node);
+        }
+      },
+      createElement(tagName) {
+        expect(tagName).toBe("a");
+        return {
+          style: {},
+          click() {
+            clicks.push(this);
+          },
+          remove() {
+            this.removed = true;
+          }
+        };
+      }
+    };
+    const urlImpl = {
+      createObjectURL: () => "blob:flowimage-result",
+      revokeObjectURL: (url) => revoked.push(url)
+    };
+    const result = await copyOrDownloadPngBlob(
+      new Blob(["png"], { type: "image/png" }),
+      {
+        clipboard: { write: async () => {} },
+        ClipboardItemCtor: class ClipboardItem {},
+        isSecureContext: false,
+        doc,
+        urlImpl,
+        filename: "qa.png"
+      }
+    );
+
+    expect(result).toBe("downloaded");
+    expect(anchors).toHaveLength(1);
+    expect(anchors[0].href).toBe("blob:flowimage-result");
+    expect(anchors[0].download).toBe("qa.png");
+    expect(clicks).toEqual([anchors[0]]);
+    expect(anchors[0].removed).toBe(true);
+    expect(revoked).toEqual(["blob:flowimage-result"]);
   });
 
   test("writes text links through the async clipboard when available", async () => {

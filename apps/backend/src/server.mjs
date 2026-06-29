@@ -1,4 +1,7 @@
 import express from "express";
+import http from "node:http";
+import https from "node:https";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { makeConfig } from "./lib/config.mjs";
@@ -56,7 +59,21 @@ export function createApp(overrides = {}) {
 if (import.meta.url === `file://${process.argv[1]}`) {
   const app = createApp();
   const config = app.locals.config;
-  app.listen(config.port, config.bindHost, () => {
-    console.log(`FlowImage backend listening on http://${config.bindHost}:${config.port}`);
+  const server = createServer(app, config);
+  const scheme = config.https ? "https" : "http";
+  server.listen(config.port, config.bindHost, () => {
+    console.log(`FlowImage backend listening on ${scheme}://${config.bindHost}:${config.port}`);
+    console.log(`FlowImage public URL ${config.publicBaseUrl}`);
   });
+}
+
+function createServer(app, config) {
+  if (!config.https) return http.createServer(app);
+  return https.createServer(
+    {
+      cert: readFileSync(config.https.certPath),
+      key: readFileSync(config.https.keyPath)
+    },
+    app
+  );
 }

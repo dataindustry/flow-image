@@ -238,6 +238,45 @@ export async function copyPngBlobToClipboard(blob, clipboard, ClipboardItemCtor,
   await clipboard.write([new ClipboardItemCtor({ "image/png": blob })]);
 }
 
+export async function copyOrDownloadPngBlob(blob, {
+  clipboard,
+  ClipboardItemCtor,
+  isSecureContext = true,
+  doc = document,
+  urlImpl = URL,
+  filename = "flowimage-result.png"
+} = {}) {
+  if (canCopyPngToClipboard(clipboard, ClipboardItemCtor, isSecureContext)) {
+    try {
+      await copyPngBlobToClipboard(blob, clipboard, ClipboardItemCtor, isSecureContext);
+      return "copied";
+    } catch {
+      // Fall through to download. Some browsers expose the API but reject image writes.
+    }
+  }
+  downloadPngBlob(blob, { doc, urlImpl, filename });
+  return "downloaded";
+}
+
+export function downloadPngBlob(blob, {
+  doc = document,
+  urlImpl = URL,
+  filename = "flowimage-result.png"
+} = {}) {
+  if (!doc?.body || typeof doc.createElement !== "function") {
+    throw new Error("Download unavailable");
+  }
+  const objectUrl = urlImpl.createObjectURL(blob);
+  const link = doc.createElement("a");
+  link.href = objectUrl;
+  link.download = filename;
+  link.style.display = "none";
+  doc.body.appendChild(link);
+  link.click();
+  link.remove();
+  releaseObjectUrl(objectUrl, urlImpl);
+}
+
 export async function copyTextToClipboard(value, clipboard, doc = document) {
   if (clipboard?.writeText) {
     await clipboard.writeText(value);
@@ -935,13 +974,18 @@ export function initViewer(doc = document) {
   doc.getElementById("copyImage").addEventListener("click", async () => {
     try {
       status.value = "Copying";
-      await copyPngBlobToClipboard(
+      const result = await copyOrDownloadPngBlob(
         await blobFromCanvas(mergedCanvas()),
-        window.navigator?.clipboard,
-        window.ClipboardItem,
-        window.isSecureContext
+        {
+          clipboard: window.navigator?.clipboard,
+          ClipboardItemCtor: window.ClipboardItem,
+          isSecureContext: window.isSecureContext,
+          doc,
+          urlImpl: window.URL,
+          filename: `flowimage-${sessionIdForRequests() || "result"}-page-${state.pageIndex + 1}.png`
+        }
       );
-      status.value = "Copied";
+      status.value = result === "copied" ? "Copied" : "Downloaded";
     } catch (error) {
       status.value = error.message || "Clipboard unavailable";
     }
