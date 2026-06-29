@@ -1,6 +1,4 @@
-import { randomBytes, randomInt } from "node:crypto";
-
-const PAIR_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+import { randomBytes } from "node:crypto";
 
 function ymd(date) {
   const year = date.getUTCFullYear();
@@ -13,32 +11,16 @@ export function makeSessionId(date = new Date()) {
   return `sess_${ymd(date)}_${randomBytes(8).toString("hex")}`;
 }
 
-export function makeSessionSecret() {
-  return `sec_${randomBytes(24).toString("base64url").slice(0, 32)}`;
+export function makeViewToken() {
+  return randomBytes(9).toString("base64url");
 }
 
-export function makePairId(date = new Date()) {
-  return `pair_${ymd(date)}_${randomBytes(8).toString("hex")}`;
+export function makeEditToken() {
+  return randomBytes(9).toString("base64url");
 }
 
-export function makePairDeviceId(date = new Date()) {
-  return `pdev_${ymd(date)}_${randomBytes(8).toString("hex")}`;
-}
-
-export function makePairDeviceToken() {
-  return `pdevtok_${randomBytes(32).toString("base64url")}`;
-}
-
-export function makePairCode() {
-  const chars = [];
-  for (let index = 0; index < 24; index += 1) {
-    chars.push(PAIR_CODE_ALPHABET[randomInt(PAIR_CODE_ALPHABET.length)]);
-  }
-  const groups = [];
-  for (let index = 0; index < chars.length; index += 4) {
-    groups.push(chars.slice(index, index + 4).join(""));
-  }
-  return `FIMG-${groups.join("-")}`;
+export function makeOwnerToken() {
+  return randomBytes(9).toString("base64url");
 }
 
 export function makeScreenshotId(index) {

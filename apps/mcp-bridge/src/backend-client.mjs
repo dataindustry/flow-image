@@ -1,38 +1,30 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { resolveFlowImageConfig } from "./flowimage-config.mjs";
 
 export class BackendClient {
-  constructor({
-    baseUrl = process.env.FLOWIMAGE_SERVER_URL ??
-      process.env.PUBLIC_BASE_URL ??
-      "http://127.0.0.1:3939",
-    bridgeToken = process.env.BRIDGE_TOKEN,
-    pairCode = process.env.FLOWIMAGE_PAIR_CODE
-  } = {}) {
+  constructor(options = {}) {
+    const config = resolveFlowImageConfig();
+    const baseUrl = options.baseUrl ?? config.serverUrl;
     this.baseUrl = baseUrl.replace(/\/$/, "");
-    this.bridgeToken = bridgeToken;
-    this.pairCode = pairCode;
   }
 
-  get isPairMode() {
-    return Boolean(this.pairCode);
+  ownerHeaders(ownerToken) {
+    return { "X-FlowImage-Owner-Token": ownerToken ?? "" };
   }
 
   async createSession({ title }) {
     const res = await fetch(`${this.baseUrl}/api/sessions`, {
       method: "POST",
       headers: {
-        "Content-Type": "application/json",
-        ...(this.isPairMode
-          ? { "X-FlowImage-Pair-Code": this.pairCode }
-          : { "X-Bridge-Token": this.bridgeToken ?? "" })
+        "Content-Type": "application/json"
       },
       body: JSON.stringify({ title })
     });
     return readJson(res);
   }
 
-  async uploadScreenshots(sessionId, sessionSecret, filePaths, labels = []) {
+  async uploadScreenshots(sessionId, filePaths, labels = [], ownerToken) {
     const body = new FormData();
     for (const [index, filePath] of filePaths.entries()) {
       const bytes = await readFile(filePath);
@@ -41,34 +33,29 @@ export class BackendClient {
     }
     const res = await fetch(`${this.baseUrl}/api/sessions/${sessionId}/screenshots`, {
       method: "POST",
-      headers: this.isPairMode
-        ? { "X-FlowImage-Pair-Code": this.pairCode }
-        : { "X-Session-Secret": sessionSecret },
+      headers: this.ownerHeaders(ownerToken),
       body
     });
     return readJson(res);
   }
 
-  async readyAnnotations(sessionId, sessionSecret) {
-    const url = `${this.baseUrl}/api/sessions/${sessionId}/annotations/ready?secret=${encodeURIComponent(sessionSecret)}`;
-    const res = await fetch(url);
-    return readJson(res);
-  }
-
-  async collectAnnotations(sessionId) {
+  async collectAnnotations(sessionId, ownerToken) {
     const res = await fetch(`${this.baseUrl}/api/sessions/${sessionId}/annotations/collect`, {
       method: "POST",
-      headers: { "X-FlowImage-Pair-Code": this.pairCode ?? "" }
+      headers: this.ownerHeaders(ownerToken)
     });
     return readJson(res);
   }
 
-  async collectLatestAnnotations() {
-    const res = await fetch(`${this.baseUrl}/api/annotations/collect-latest`, {
-      method: "POST",
-      headers: { "X-FlowImage-Pair-Code": this.pairCode ?? "" }
+  async fetchAnnotationImage(url, ownerToken) {
+    const resolved = new URL(url, `${this.baseUrl}/`).toString();
+    const res = await fetch(resolved, {
+      headers: this.ownerHeaders(ownerToken)
     });
-    return readJson(res);
+    if (!res.ok) {
+      throw new Error(`Annotation image request failed: ${res.status}`);
+    }
+    return Buffer.from(await res.arrayBuffer());
   }
 }
 

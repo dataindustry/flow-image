@@ -4,47 +4,101 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>FlowImage</title>
-    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/styles.css?v=20260629-eraser-realtime" />
   </head>
   <body>
     <main class="app">
-      <section id="pairPanel" class="pair-panel" hidden>
-        <h1>FlowImage</h1>
-        <div class="pair-actions">
-          <button id="generatePair" type="button">Generate Pair Code</button>
-          <output id="pairCodeOutput" class="pair-code"></output>
-        </div>
-        <div class="pair-actions">
-          <input id="bindPairCode" type="text" autocomplete="off" placeholder="FIMG-..." />
-          <button id="bindPair" type="button">Enter Existing Pair Code</button>
-        </div>
-        <output id="pairStatus">Loading</output>
-        <div id="sessionList" class="session-list"></div>
-      </section>
       <section id="annotationPanel" class="annotation-panel">
-        <header class="toolbar">
-          <button id="prevPage" type="button" aria-label="Previous page">Prev</button>
-          <output id="pageStatus">Page 0 / 0</output>
-          <button id="nextPage" type="button" aria-label="Next page">Next</button>
-          <button id="brushTool" type="button" data-tool="brush">Brush</button>
-          <button id="eraserTool" type="button" data-tool="eraser">Eraser</button>
-          <label>
-            Color
-            <input id="colorInput" type="color" value="#ff3040" />
-          </label>
-          <label>
-            Width
-            <input id="widthInput" type="range" min="2" max="18" value="5" />
-          </label>
-          <button id="submitPage" type="button">Submit</button>
-          <output id="saveStatus">Loading</output>
+        <header class="toolbar" aria-label="FlowImage command bar">
+          <div class="brand-group">
+            <span id="roleChip" class="role-chip">Loading</span>
+          </div>
+          <div class="toolbar-group page-group" aria-label="Page navigation">
+            <button id="prevPage" class="icon-button" type="button" aria-label="Previous page">Prev</button>
+            <output id="pageStatus" class="page-status">Page 0 / 0</output>
+            <button id="nextPage" class="icon-button" type="button" aria-label="Next page">Next</button>
+          </div>
+          <div class="toolbar-group tool-group" aria-label="Canvas tools">
+            <button id="brushTool" class="tool-button" type="button" data-tool="brush">Pen</button>
+            <button id="eraserTool" class="tool-button" type="button" data-tool="eraser">Erase</button>
+            <label id="colorControl" class="compact-field" aria-label="Pen color">
+              <span>Color</span>
+              <input id="colorInput" type="color" value="#ff3040" />
+            </label>
+            <label id="widthControl" class="compact-field" aria-label="Pen width">
+              <span>Width</span>
+              <input id="widthInput" type="range" min="2" max="18" value="5" />
+            </label>
+            <label id="syncControl" class="compact-field" aria-label="Save mode">
+              <span>Save</span>
+              <select id="syncInterval">
+                <option value="manual">Manual</option>
+                <option value="stroke">Realtime</option>
+                <option value="5000">5s</option>
+                <option value="10000">10s</option>
+                <option value="60000">60s</option>
+              </select>
+            </label>
+          </div>
+          <div class="toolbar-spacer"></div>
+          <output id="saveStatus" class="save-status">Loading</output>
+          <div class="toolbar-group action-group" aria-label="Session actions">
+            <button id="shareButton" class="secondary-button" type="button">Share</button>
+            <button id="copyImage" class="secondary-button" type="button">Copy Image</button>
+            <button id="submitPage" class="primary-button" type="button">Submit</button>
+            <button id="newSession" class="secondary-button" type="button">New</button>
+          </div>
         </header>
-        <section class="stage" aria-label="Annotation canvas">
-          <img id="baseImage" alt="Screenshot to annotate" />
+        <section class="stage" aria-label="FlowImage canvas">
+          <img id="baseImage" alt="Screenshot to annotate" hidden />
+          <canvas id="baseCanvas"></canvas>
           <canvas id="drawCanvas"></canvas>
         </section>
+        <aside id="sharePanel" class="share-panel" hidden aria-label="Share FlowImage session">
+          <div class="share-panel-header">
+            <h2>Share</h2>
+            <button id="closeSharePanel" class="icon-button" type="button" aria-label="Close share panel">Close</button>
+          </div>
+          <label class="share-link-field">
+            <span>View Link</span>
+            <input id="viewShareUrl" type="url" readonly />
+            <button id="copyViewLink" type="button">Copy</button>
+            <button id="showViewQr" type="button">QR</button>
+          </label>
+          <label class="share-link-field">
+            <span>Edit Link</span>
+            <input id="editShareUrl" type="url" readonly />
+            <button id="copyEditLink" type="button">Copy</button>
+            <button id="showEditQr" type="button">QR</button>
+          </label>
+          <div id="ownerControls" class="owner-controls" hidden>
+            <label>
+              <span>Keep</span>
+              <input id="retentionValue" type="number" min="1" max="720" value="7" />
+            </label>
+            <label>
+              <span>Unit</span>
+              <select id="retentionUnit">
+                <option value="hours">Hours</option>
+                <option value="days">Days</option>
+              </select>
+            </label>
+            <button id="saveRetention" type="button">Save</button>
+          </div>
+        </aside>
       </section>
     </main>
-    <script type="module" src="/app.js"></script>
+    <dialog id="qrDialog" class="qr-dialog">
+      <form method="dialog">
+        <h2 id="qrTitle">Share QR</h2>
+        <img id="qrImage" alt="Share QR code" />
+        <output id="qrStatus"></output>
+        <div class="qr-actions">
+          <button id="copyQrLink" type="button">Copy Link</button>
+          <button id="closeQrDialog" type="submit">Close</button>
+        </div>
+      </form>
+    </dialog>
+    <script type="module" src="/app.js?v=20260629-eraser-realtime"></script>
   </body>
 </html>

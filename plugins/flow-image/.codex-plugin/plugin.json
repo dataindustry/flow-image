@@ -1,0 +1,29 @@
+{
+  "name": "flow-image",
+  "version": "0.1.0",
+  "description": "Send UI screenshots to FlowImage for iPad/Web canvas review and collect returned images in Codex.",
+  "author": {
+    "name": "Like Water",
+    "url": "https://like-water.net"
+  },
+  "homepage": "https://like-water.net",
+  "license": "MIT",
+  "keywords": ["flow-image", "ui-review", "mcp", "canvas"],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "FlowImage",
+    "shortDescription": "Send screenshots to iPad/Web canvas review and collect returned images.",
+    "longDescription": "FlowImage connects Codex with a web or iPad canvas. Configure a server URL, publish screenshots through the bundled MCP server, then collect returned PNGs back into Codex.",
+    "developerName": "Like Water",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Write"],
+    "websiteURL": "https://like-water.net",
+    "defaultPrompt": [
+      "Open FlowImage settings",
+      "Verify FlowImage setup",
+      "Publish screenshots with FlowImage"
+    ],
+    "brandColor": "#2563EB"
+  }
+}

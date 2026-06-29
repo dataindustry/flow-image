@@ -1,16 +1,17 @@
 import express from "express";
+import { rateLimitMiddleware } from "../lib/rate-limit.mjs";
 import { publicSession } from "../lib/store.mjs";
 
-function getSecret(req) {
-  return req.get("X-Session-Secret") ?? req.query.secret;
+function getViewToken(req) {
+  return req.get("X-FlowImage-View-Token");
 }
 
-function getPairCode(req) {
-  return req.get("X-FlowImage-Pair-Code");
+function getEditToken(req) {
+  return req.get("X-FlowImage-Edit-Token");
 }
 
-function getPairDeviceToken(req) {
-  return req.get("X-Pair-Device-Token");
+function getOwnerToken(req) {
+  return req.get("X-FlowImage-Owner-Token");
 }
 
 function assertUsableSession(store, session, res) {
@@ -25,59 +26,60 @@ function assertUsableSession(store, session, res) {
   return true;
 }
 
-export function requireSessionSecret(store) {
-  return async function sessionSecretMiddleware(req, res, next) {
-    const session = await store.getSession(req.params.sessionId);
-    if (!assertUsableSession(store, session, res)) return;
-    if (!getSecret(req)) {
-      res.status(401).json({ error: "missing_secret" });
-      return;
-    }
-    if (getSecret(req) !== session.session_secret) {
-      res.status(403).json({ error: "wrong_secret" });
-      return;
-    }
-    req.session = session;
-    next();
-  };
-}
-
 export function requireSessionAccess(
   store,
-  { allowPairCode = false, allowDeviceToken = false, allowLegacySecret = true } = {}
+  { allowViewToken = false, allowEditToken = false, allowOwnerToken = false } = {}
 ) {
   return async function sessionAccessMiddleware(req, res, next) {
-    if (allowPairCode && getPairCode(req)) {
-      const pair = await store.getPairForCode(getPairCode(req));
-      if (!pair) {
-        res.status(403).json({ error: "wrong_pair_code" });
+    if (allowOwnerToken && getOwnerToken(req)) {
+      const session = await store.getSessionForCapabilityAndId(
+        "owner",
+        getOwnerToken(req),
+        req.params.sessionId
+      );
+      if (!session) {
+        res.status(403).json({ error: "wrong_owner_token" });
         return;
       }
-      const session = await store.getPairSession(pair.pair_id, req.params.sessionId);
       if (!assertUsableSession(store, session, res)) return;
-      req.pair = pair;
       req.session = session;
+      req.access = "owner";
       next();
       return;
     }
 
-    if (allowDeviceToken && getPairDeviceToken(req)) {
-      const result = await store.getPairForDeviceToken(getPairDeviceToken(req));
-      if (!result) {
-        res.status(403).json({ error: "wrong_pair_device_token" });
+    if (allowEditToken && getEditToken(req)) {
+      const session = await store.getSessionForCapabilityAndId(
+        "edit",
+        getEditToken(req),
+        req.params.sessionId
+      );
+      if (!session) {
+        res.status(403).json({ error: "wrong_edit_token" });
         return;
       }
-      const session = await store.getPairSession(result.pair.pair_id, req.params.sessionId);
       if (!assertUsableSession(store, session, res)) return;
-      req.pair = result.pair;
-      req.pairDevice = result.device;
       req.session = session;
+      req.access = "edit";
       next();
       return;
     }
 
-    if (allowLegacySecret) {
-      return requireSessionSecret(store)(req, res, next);
+    if (allowViewToken && getViewToken(req)) {
+      const session = await store.getSessionForCapabilityAndId(
+        "view",
+        getViewToken(req),
+        req.params.sessionId
+      );
+      if (!session) {
+        res.status(403).json({ error: "wrong_view_token" });
+        return;
+      }
+      if (!assertUsableSession(store, session, res)) return;
+      req.session = session;
+      req.access = "view";
+      next();
+      return;
     }
 
     res.status(401).json({ error: "missing_auth" });
@@ -87,48 +89,64 @@ export function requireSessionAccess(
 export function sessionsRouter({ config, store }) {
   const router = express.Router();
 
-  router.post("/", async (req, res) => {
-    const title = String(req.body?.title ?? "").trim();
-    if (!title || title.length > 120) {
-      res.status(400).json({ error: "invalid_title" });
-      return;
-    }
-
-    if (getPairCode(req)) {
-      const pair = await store.getPairForCode(getPairCode(req));
-      if (!pair) {
-        res.status(403).json({ error: "wrong_pair_code" });
+  router.post(
+    "/",
+    rateLimitMiddleware(store, config.rateLimit, "create", "createLimit"),
+    async (req, res) => {
+      const title = String(req.body?.title ?? "").trim();
+      if (!title || title.length > 120) {
+        res.status(400).json({ error: "invalid_title" });
         return;
       }
-      const session = await store.createSession({ title, pairId: pair.pair_id });
+
+      const created = await store.createSession({
+        title,
+        defaultPage: req.body?.default_page,
+        idempotencyKey: req.body?.idempotency_key
+      });
+      const session = created.session;
       res.json({
         session_id: session.session_id,
-        viewer_url: session.viewer_url,
+        view_url: created.view_url,
+        edit_url: created.edit_url,
+        owner_url: created.owner_url,
+        owner_token: created.owner_token,
         status: session.status,
-        expires_at: session.expires_at
+        expires_at: session.expires_at,
+        retention_hours: session.retention_hours
       });
-      return;
     }
-
-    if (!config.bridgeToken || req.get("X-Bridge-Token") !== config.bridgeToken) {
-      res.status(403).json({ error: "wrong_bridge_token" });
-      return;
-    }
-
-    const session = await store.createSession({ title });
-    res.json({
-      session_id: session.session_id,
-      session_secret: session.session_secret,
-      viewer_url: session.viewer_url,
-      expires_at: session.expires_at
-    });
-  });
+  );
 
   router.get(
     "/:sessionId",
-    requireSessionAccess(store, { allowDeviceToken: true, allowLegacySecret: true }),
+    requireSessionAccess(store, {
+      allowViewToken: true,
+      allowEditToken: true,
+      allowOwnerToken: true
+    }),
     (req, res) => {
-    res.json(publicSession(req.session));
+      res.json(publicSession(req.session, req.access));
+    }
+  );
+
+  router.patch(
+    "/:sessionId/retention",
+    requireSessionAccess(store, { allowOwnerToken: true }),
+    async (req, res) => {
+      const session = await store.setRetention(req.session, {
+        value: req.body?.value,
+        unit: req.body?.unit
+      });
+      if (!session) {
+        res.status(400).json({ error: "invalid_retention" });
+        return;
+      }
+      res.json({
+        session_id: session.session_id,
+        expires_at: session.expires_at,
+        retention_hours: session.retention_hours
+      });
     }
   );
 

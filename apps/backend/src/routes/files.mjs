@@ -20,9 +20,9 @@ export function filesRouter({ store }) {
   router.get(
     "/sessions/:sessionId/:kind/:fileName",
     requireSessionAccess(store, {
-      allowPairCode: true,
-      allowDeviceToken: true,
-      allowLegacySecret: true
+      allowViewToken: true,
+      allowEditToken: true,
+      allowOwnerToken: true
     }),
     async (req, res) => {
       const { sessionId, kind, fileName } = req.params;

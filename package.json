@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "pnpm -r test",
+    "test": "pnpm -r test && node --test plugins/flow-image/test/*.test.mjs",
+    "dev:check": "bash scripts/check-dev-server.sh",
     "dev:backend": "pnpm --filter backend dev",
     "dev:mcp": "pnpm --filter mcp-bridge dev"
   },

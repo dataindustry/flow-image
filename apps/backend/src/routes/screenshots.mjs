@@ -2,6 +2,7 @@ import express from "express";
 import multer from "multer";
 import { MAX_PNG_BYTES, MAX_SCREENSHOTS } from "../lib/config.mjs";
 import { parsePngMeta } from "../lib/png.mjs";
+import { rateLimitMiddleware } from "../lib/rate-limit.mjs";
 import { requireSessionAccess } from "./sessions.mjs";
 
 const upload = multer({
@@ -12,12 +13,15 @@ const upload = multer({
   }
 });
 
-export function screenshotsRouter({ store }) {
+export function screenshotsRouter({ config, store }) {
   const router = express.Router({ mergeParams: true });
 
   router.post(
     "/:sessionId/screenshots",
-    requireSessionAccess(store, { allowPairCode: true, allowLegacySecret: true }),
+    rateLimitMiddleware(store, config.rateLimit, "upload", "uploadRequestLimit", {
+      byteLimitKey: "uploadBytesLimit"
+    }),
+    requireSessionAccess(store, { allowOwnerToken: true }),
     upload.array("files[]", MAX_SCREENSHOTS),
     async (req, res) => {
       try {
@@ -28,6 +32,14 @@ export function screenshotsRouter({ store }) {
         }
         if (req.session.screenshots.length + files.length > MAX_SCREENSHOTS) {
           res.status(413).json({ error: "too_many_files" });
+          return;
+        }
+        const incomingBytes = files.reduce((total, file) => total + file.buffer.length, 0);
+        if (
+          store.sessionStoredBytes(req.session.session_id) + incomingBytes >
+          config.rateLimit.sessionBytesLimit
+        ) {
+          res.status(413).json({ error: "session_storage_limit" });
           return;
         }
         const rawLabels = req.body["labels[]"] ?? req.body.labels;

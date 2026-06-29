@@ -1,111 +1,242 @@
 import path from "node:path";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
-import { DEFAULT_TTL_HOURS } from "./config.mjs";
-import { hashCredential, isValidPairCode, normalizePairCode } from "./auth.mjs";
+import { mkdirSync } from "node:fs";
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import Database from "better-sqlite3";
+import { hashCredential } from "./auth.mjs";
+import { createBlankPng } from "./png.mjs";
 import {
   makeAnnotationId,
-  makePairCode,
-  makePairDeviceId,
-  makePairDeviceToken,
-  makePairId,
+  makeEditToken,
+  makeOwnerToken,
   makeScreenshotId,
   makeSessionId,
-  makeSessionSecret
+  makeViewToken
 } from "./ids.mjs";
 
-const PUBLIC_PAIR_TTL_HOURS = 24 * 7;
+export const DEFAULT_RETENTION_HOURS = 24 * 7;
+export const MAX_RETENTION_HOURS = 24 * 30;
 
 export class SessionStore {
   constructor({ dataDir, publicBaseUrl, now }) {
     this.dataDir = dataDir;
     this.publicBaseUrl = publicBaseUrl;
     this.now = now;
+    mkdirSync(dataDir, { recursive: true });
+    this.db = new Database(path.join(dataDir, "flowimage.sqlite"));
+    this.db.pragma("foreign_keys = ON");
+    this.db.pragma("journal_mode = WAL");
+    this.migrate();
+  }
+
+  migrate() {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS sessions (
+        session_id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        view_token TEXT,
+        edit_token TEXT,
+        owner_token TEXT,
+        view_token_hash TEXT NOT NULL,
+        edit_token_hash TEXT NOT NULL,
+        owner_token_hash TEXT NOT NULL,
+        idempotency_key_hash TEXT,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        retention_hours INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS screenshots (
+        session_id TEXT NOT NULL,
+        screenshot_id TEXT NOT NULL,
+        page_index INTEGER NOT NULL,
+        label TEXT NOT NULL,
+        image_url TEXT NOT NULL,
+        width INTEGER NOT NULL,
+        height INTEGER NOT NULL,
+        byte_size INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (session_id, screenshot_id),
+        FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
+      );
+
+      CREATE TABLE IF NOT EXISTS results (
+        session_id TEXT NOT NULL,
+        screenshot_id TEXT NOT NULL,
+        annotation_id TEXT NOT NULL,
+        page_index INTEGER NOT NULL,
+        merged_png_url TEXT NOT NULL,
+        revision INTEGER NOT NULL,
+        width INTEGER NOT NULL,
+        height INTEGER NOT NULL,
+        byte_size INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (session_id, screenshot_id),
+        FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
+      );
+
+      CREATE TABLE IF NOT EXISTS rate_limits (
+        bucket_key TEXT PRIMARY KEY,
+        count INTEGER NOT NULL DEFAULT 0,
+        bytes INTEGER NOT NULL DEFAULT 0,
+        reset_at INTEGER NOT NULL
+      );
+
+    `);
+    this.ensureSessionColumn("view_token", "TEXT");
+    this.ensureSessionColumn("edit_token", "TEXT");
+    this.ensureSessionColumn("owner_token", "TEXT");
+    this.ensureSessionColumn("idempotency_key_hash", "TEXT");
+    this.db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_idempotency_key_hash
+        ON sessions(idempotency_key_hash)
+        WHERE idempotency_key_hash IS NOT NULL;
+    `);
+  }
+
+  ensureSessionColumn(name, type) {
+    const exists = this.db
+      .prepare("PRAGMA table_info(sessions)")
+      .all()
+      .some((column) => column.name === name);
+    if (!exists) {
+      this.db.prepare(`ALTER TABLE sessions ADD COLUMN ${name} ${type}`).run();
+    }
+  }
+
+  sessionsDir() {
+    return path.join(this.dataDir, "files", "sessions");
   }
 
   sessionDir(sessionId) {
-    return path.join(this.dataDir, sessionId);
-  }
-
-  pairsDir() {
-    return path.join(this.dataDir, "pairs");
-  }
-
-  pairDir(pairId) {
-    return path.join(this.pairsDir(), pairId);
-  }
-
-  pairJsonPath(pairId) {
-    return path.join(this.pairDir(pairId), "pair.json");
-  }
-
-  pairDevicesDir(pairId) {
-    return path.join(this.pairDir(pairId), "devices");
-  }
-
-  pairDeviceJsonPath(pairId, deviceId) {
-    return path.join(this.pairDevicesDir(pairId), `${deviceId}.json`);
-  }
-
-  pairSessionsDir(pairId) {
-    return path.join(this.pairDir(pairId), "sessions");
-  }
-
-  pairSessionDir(pairId, sessionId) {
-    return path.join(this.pairSessionsDir(pairId), sessionId);
+    return path.join(this.sessionsDir(), sessionId);
   }
 
   sessionDirFor(session) {
-    if (session.pair_id) return this.pairSessionDir(session.pair_id, session.session_id);
     return this.sessionDir(session.session_id);
   }
 
-  sessionJsonPath(sessionId) {
-    return path.join(this.sessionDir(sessionId), "session.json");
+  shareUrl(mode, sessionIdOrToken, maybeToken) {
+    const token = maybeToken ?? sessionIdOrToken;
+    const routeMode = mode === "view" ? "v" : mode === "edit" ? "e" : "o";
+    return `${this.publicBaseUrl}/${routeMode}/${token}`;
   }
 
-  sessionJsonPathFor(session) {
-    return path.join(this.sessionDirFor(session), "session.json");
+  ownerUrl(sessionId, ownerToken) {
+    return this.shareUrl("owner", sessionId, ownerToken);
   }
 
-  async createSession({ title, pairId }) {
+  async createSession({
+    title,
+    retentionHours = DEFAULT_RETENTION_HOURS,
+    defaultPage,
+    idempotencyKey
+  }) {
+    await this.cleanupExpiredSessions();
+    const idempotencyKeyHash = idempotencyKey ? hashCredential(idempotencyKey) : null;
+    if (idempotencyKeyHash) {
+      const existing = await this.getSessionByIdempotencyKeyHash(idempotencyKeyHash);
+      if (existing && !this.isExpired(existing)) {
+        return this.sessionCreationResult(existing);
+      }
+    }
+
     const createdAt = this.now();
-    const ttlHours = pairId ? PUBLIC_PAIR_TTL_HOURS : DEFAULT_TTL_HOURS;
-    const expiresAt = new Date(createdAt.getTime() + ttlHours * 60 * 60 * 1000);
     const sessionId = makeSessionId(createdAt);
-    const sessionSecret = makeSessionSecret();
+    const viewToken = makeViewToken();
+    const editToken = makeEditToken();
+    const ownerToken = makeOwnerToken();
+    const normalizedRetention = normalizeRetentionHours(retentionHours);
+    const expiresAt = addHours(createdAt, normalizedRetention);
     const session = {
       session_id: sessionId,
       title,
-      viewer_url: pairId
-        ? `${this.publicBaseUrl}/s/${sessionId}`
-        : `${this.publicBaseUrl}/s/${sessionId}?secret=${sessionSecret}`,
-      ...(pairId ? { pair_id: pairId, status: "pending_annotation" } : { session_secret: sessionSecret }),
+      view_token: viewToken,
+      edit_token: editToken,
+      owner_token: ownerToken,
+      view_token_hash: hashCredential(viewToken),
+      edit_token_hash: hashCredential(editToken),
+      owner_token_hash: hashCredential(ownerToken),
+      idempotency_key_hash: idempotencyKeyHash,
+      status: "pending_result",
       created_at: createdAt.toISOString(),
       updated_at: createdAt.toISOString(),
       expires_at: expiresAt.toISOString(),
+      retention_hours: normalizedRetention,
       screenshots: [],
       annotations: []
     };
+    session.public_base_url = this.publicBaseUrl;
 
     await mkdir(path.join(this.sessionDirFor(session), "screenshots"), { recursive: true });
     await mkdir(path.join(this.sessionDirFor(session), "annotations"), { recursive: true });
     await this.saveSession(session);
-    return session;
+    if (defaultPage === "blank_grid") {
+      await this.addScreenshots(session, [
+        {
+          buffer: createBlankPng(1440, 900),
+          label: "Blank canvas",
+          width: 1440,
+          height: 900
+        }
+      ]);
+    }
+    return this.sessionCreationResult(session);
   }
 
-  async getSession(sessionId) {
-    try {
-      const raw = await readFile(this.sessionJsonPath(sessionId), "utf8");
-      return JSON.parse(raw);
-    } catch (error) {
-      if (error.code === "ENOENT") return null;
-      throw error;
-    }
+  sessionCreationResult(session) {
+    const viewToken = session.view_token;
+    const editToken = session.edit_token;
+    const ownerToken = session.owner_token;
+    const viewUrl = this.shareUrl("view", session.session_id, viewToken);
+    const editUrl = this.shareUrl("edit", session.session_id, editToken);
+    return {
+      session,
+      view_token: viewToken,
+      edit_token: editToken,
+      owner_token: ownerToken,
+      view_url: viewUrl,
+      edit_url: editUrl,
+      owner_url: this.ownerUrl(session.session_id, ownerToken)
+    };
   }
 
   async saveSession(session) {
     await mkdir(this.sessionDirFor(session), { recursive: true });
-    await writeFile(this.sessionJsonPathFor(session), JSON.stringify(session, null, 2));
+    this.db
+      .prepare(
+        `INSERT INTO sessions (
+          session_id, title, view_token, edit_token, owner_token,
+          view_token_hash, edit_token_hash, owner_token_hash, idempotency_key_hash,
+          status, created_at, updated_at, expires_at, retention_hours
+        ) VALUES (
+          @session_id, @title, @view_token, @edit_token, @owner_token,
+          @view_token_hash, @edit_token_hash, @owner_token_hash, @idempotency_key_hash,
+          @status, @created_at, @updated_at, @expires_at, @retention_hours
+        )
+        ON CONFLICT(session_id) DO UPDATE SET
+          title = excluded.title,
+          view_token = excluded.view_token,
+          edit_token = excluded.edit_token,
+          owner_token = excluded.owner_token,
+          view_token_hash = excluded.view_token_hash,
+          edit_token_hash = excluded.edit_token_hash,
+          owner_token_hash = excluded.owner_token_hash,
+          idempotency_key_hash = excluded.idempotency_key_hash,
+          status = excluded.status,
+          created_at = excluded.created_at,
+          updated_at = excluded.updated_at,
+          expires_at = excluded.expires_at,
+          retention_hours = excluded.retention_hours`
+      )
+      .run(toSessionRow(session));
+
+    for (const screenshot of session.screenshots ?? []) {
+      this.upsertScreenshot(session.session_id, screenshot);
+    }
+    for (const annotation of session.annotations ?? []) {
+      this.upsertResult(session.session_id, annotation);
+    }
   }
 
   screenshotPath(session, screenshotId) {
@@ -129,27 +260,32 @@ export class SessionStore {
         label: file.label ?? "",
         image_url: imageUrl,
         width: file.width,
-        height: file.height
+        height: file.height,
+        byte_size: file.buffer.length
       };
       session.screenshots.push(item);
-      items.push(item);
+      this.upsertScreenshot(session.session_id, item);
+      items.push(publicScreenshot(item));
     }
-    await this.saveSession(session);
     return items;
   }
 
-  async saveMergedAnnotation(session, screenshotId, buffer) {
+  async saveMergedAnnotation(session, screenshotId, buffer, meta = {}) {
     const screenshot = session.screenshots.find((item) => item.screenshot_id === screenshotId);
     if (!screenshot) return null;
 
     await writeFile(this.annotationPath(session, screenshotId), buffer);
     const existingIndex = session.annotations.findIndex((item) => item.screenshot_id === screenshotId);
+    const existing = existingIndex >= 0 ? session.annotations[existingIndex] : null;
     const annotation = {
-      annotation_id: existingIndex >= 0 ? session.annotations[existingIndex].annotation_id : makeAnnotationId(session.annotations.length + 1),
+      annotation_id: existing ? existing.annotation_id : makeAnnotationId(session.annotations.length + 1),
       screenshot_id: screenshotId,
       page_index: screenshot.page_index,
       merged_png_url: `/files/sessions/${session.session_id}/annotations/${screenshotId}-merged.png`,
-      merged_png_path: this.annotationPath(session, screenshotId),
+      revision: Number(existing?.revision ?? 0) + 1,
+      width: meta.width ?? screenshot.width,
+      height: meta.height ?? screenshot.height,
+      byte_size: buffer.length,
       updated_at: this.now().toISOString()
     };
 
@@ -159,195 +295,312 @@ export class SessionStore {
       session.annotations.push(annotation);
     }
     session.updated_at = annotation.updated_at;
-    if (session.pair_id) {
-      session.status =
-        session.annotations.length >= session.screenshots.length ? "returned" : "partially_returned";
-      this.refreshPairSessionExpiry(session);
-    }
+    session.status =
+      session.annotations.length >= session.screenshots.length ? "returned" : "partially_returned";
     await this.saveSession(session);
-    return annotation;
+    return publicAnnotation(annotation);
+  }
+
+  async setRetention(session, { value, unit }) {
+    const numericValue = Number(value);
+    if (!Number.isInteger(numericValue) || numericValue < 1) return null;
+    const retentionHours = unit === "days" ? numericValue * 24 : numericValue;
+    const normalizedRetention = normalizeRetentionHours(retentionHours);
+    const now = this.now();
+    session.retention_hours = normalizedRetention;
+    session.updated_at = now.toISOString();
+    session.expires_at = addHours(now, normalizedRetention).toISOString();
+    await this.saveSession(session);
+    await this.cleanupExpiredSessions();
+    return session;
   }
 
   isExpired(session) {
     return new Date(session.expires_at).getTime() <= this.now().getTime();
   }
 
-  refreshPairSessionExpiry(session) {
-    if (!session.pair_id) return;
-    const now = this.now();
-    session.updated_at = now.toISOString();
-    session.expires_at = new Date(now.getTime() + PUBLIC_PAIR_TTL_HOURS * 60 * 60 * 1000).toISOString();
+  async getStandaloneSession(sessionId) {
+    const row = this.db
+      .prepare("SELECT * FROM sessions WHERE session_id = ?")
+      .get(sessionId);
+    return row ? this.hydrateSession(row) : null;
   }
 
-  async createPair({ label = "" } = {}) {
-    const createdAt = this.now();
-    const pairId = makePairId(createdAt);
-    const pairCode = makePairCode();
-    const deviceToken = makePairDeviceToken();
-    const deviceId = makePairDeviceId(createdAt);
-    const pair = {
-      pair_id: pairId,
-      pair_code_hash: hashCredential(normalizePairCode(pairCode)),
-      created_at: createdAt.toISOString(),
-      last_seen_at: createdAt.toISOString(),
-      revoked_at: null,
-      display_name: String(label ?? "").slice(0, 120)
+  async getSessionByIdempotencyKeyHash(idempotencyKeyHash) {
+    const row = this.db
+      .prepare("SELECT * FROM sessions WHERE idempotency_key_hash = ?")
+      .get(idempotencyKeyHash);
+    return row ? this.hydrateSession(row) : null;
+  }
+
+  async listStandaloneSessionIds() {
+    return this.db
+      .prepare("SELECT session_id FROM sessions ORDER BY created_at ASC")
+      .all()
+      .map((row) => row.session_id);
+  }
+
+  async cleanupExpiredSessions() {
+    const now = this.now().toISOString();
+    this.db.prepare("DELETE FROM rate_limits WHERE reset_at <= ?").run(this.now().getTime());
+    const expired = this.db
+      .prepare("SELECT session_id FROM sessions WHERE expires_at <= ?")
+      .all(now);
+    const deleteSession = this.db.transaction((sessionId) => {
+      this.db.prepare("DELETE FROM results WHERE session_id = ?").run(sessionId);
+      this.db.prepare("DELETE FROM screenshots WHERE session_id = ?").run(sessionId);
+      this.db.prepare("DELETE FROM sessions WHERE session_id = ?").run(sessionId);
+    });
+    for (const row of expired) {
+      await rm(this.sessionDir(row.session_id), { recursive: true, force: true });
+      deleteSession(row.session_id);
+    }
+  }
+
+  async getSessionForCapabilityAndId(kind, token, sessionId) {
+    const session = await this.getStandaloneSession(sessionId);
+    if (!session) return null;
+    const hashField = `${kind}_token_hash`;
+    return session[hashField] === hashCredential(token) ? session : null;
+  }
+
+  async getSessionForCapability(kind, token) {
+    const hashField = `${kind}_token_hash`;
+    const row = this.db
+      .prepare(`SELECT * FROM sessions WHERE ${hashField} = ?`)
+      .get(hashCredential(token));
+    return row ? this.hydrateSession(row) : null;
+  }
+
+  sessionStoredBytes(sessionId, { replaceResultFor } = {}) {
+    const screenshotBytes =
+      this.db
+        .prepare("SELECT COALESCE(SUM(byte_size), 0) AS total FROM screenshots WHERE session_id = ?")
+        .get(sessionId).total ?? 0;
+    const resultQuery = replaceResultFor
+      ? this.db
+          .prepare(
+            "SELECT COALESCE(SUM(byte_size), 0) AS total FROM results WHERE session_id = ? AND screenshot_id != ?"
+          )
+          .get(sessionId, replaceResultFor)
+      : this.db
+          .prepare("SELECT COALESCE(SUM(byte_size), 0) AS total FROM results WHERE session_id = ?")
+          .get(sessionId);
+    return Number(screenshotBytes) + Number(resultQuery.total ?? 0);
+  }
+
+  consumeRateLimit(bucketKey, { limit, windowMs, cost = 1, byteCost = 0 }) {
+    const nowMs = this.now().getTime();
+    const resetAt = nowMs + windowMs;
+    const current = this.db
+      .prepare("SELECT * FROM rate_limits WHERE bucket_key = ?")
+      .get(bucketKey);
+    const expired = !current || current.reset_at <= nowMs;
+    const nextCount = expired ? cost : current.count + cost;
+    const nextBytes = expired ? byteCost : current.bytes + byteCost;
+    const effectiveReset = expired ? resetAt : current.reset_at;
+
+    if (nextCount > limit || nextBytes > limit) {
+      return {
+        allowed: false,
+        retryAfterSeconds: Math.max(1, Math.ceil((effectiveReset - nowMs) / 1000))
+      };
+    }
+
+    this.db
+      .prepare(
+        `INSERT INTO rate_limits (bucket_key, count, bytes, reset_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(bucket_key) DO UPDATE SET
+          count = excluded.count,
+          bytes = excluded.bytes,
+          reset_at = excluded.reset_at`
+      )
+      .run(bucketKey, nextCount, nextBytes, effectiveReset);
+    return { allowed: true, retryAfterSeconds: 0 };
+  }
+
+  upsertScreenshot(sessionId, screenshot) {
+    this.db
+      .prepare(
+        `INSERT INTO screenshots (
+          session_id, screenshot_id, page_index, label, image_url, width, height, byte_size
+        ) VALUES (
+          @session_id, @screenshot_id, @page_index, @label, @image_url, @width, @height, @byte_size
+        )
+        ON CONFLICT(session_id, screenshot_id) DO UPDATE SET
+          page_index = excluded.page_index,
+          label = excluded.label,
+          image_url = excluded.image_url,
+          width = excluded.width,
+          height = excluded.height,
+          byte_size = excluded.byte_size`
+      )
+      .run({ session_id: sessionId, ...screenshot, byte_size: screenshot.byte_size ?? 0 });
+  }
+
+  upsertResult(sessionId, annotation) {
+    this.db
+      .prepare(
+        `INSERT INTO results (
+          session_id, screenshot_id, annotation_id, page_index, merged_png_url,
+          revision, width, height, byte_size, updated_at
+        ) VALUES (
+          @session_id, @screenshot_id, @annotation_id, @page_index, @merged_png_url,
+          @revision, @width, @height, @byte_size, @updated_at
+        )
+        ON CONFLICT(session_id, screenshot_id) DO UPDATE SET
+          annotation_id = excluded.annotation_id,
+          page_index = excluded.page_index,
+          merged_png_url = excluded.merged_png_url,
+          revision = excluded.revision,
+          width = excluded.width,
+          height = excluded.height,
+          byte_size = excluded.byte_size,
+          updated_at = excluded.updated_at`
+      )
+      .run({ session_id: sessionId, ...annotation, byte_size: annotation.byte_size ?? 0 });
+  }
+
+  hydrateSession(row) {
+    const screenshots = this.db
+      .prepare("SELECT * FROM screenshots WHERE session_id = ? ORDER BY page_index ASC")
+      .all(row.session_id)
+      .map(fromScreenshotRow);
+    const annotations = this.db
+      .prepare("SELECT * FROM results WHERE session_id = ? ORDER BY page_index ASC")
+      .all(row.session_id)
+      .map(fromResultRow);
+    return {
+      ...fromSessionRow(row),
+      public_base_url: this.publicBaseUrl,
+      screenshots,
+      annotations
     };
-    const device = {
-      device_id: deviceId,
-      pair_id: pairId,
-      device_token_hash: hashCredential(deviceToken),
-      created_at: createdAt.toISOString(),
-      last_seen_at: createdAt.toISOString(),
-      revoked_at: null,
-      label: String(label ?? "").slice(0, 120)
-    };
-
-    await mkdir(this.pairDevicesDir(pairId), { recursive: true });
-    await mkdir(this.pairSessionsDir(pairId), { recursive: true });
-    await writeFile(this.pairJsonPath(pairId), JSON.stringify(pair, null, 2));
-    await writeFile(this.pairDeviceJsonPath(pairId, deviceId), JSON.stringify(device, null, 2));
-    return { pair, pair_code: pairCode, pair_device_token: deviceToken };
-  }
-
-  async getPair(pairId) {
-    try {
-      const raw = await readFile(this.pairJsonPath(pairId), "utf8");
-      return JSON.parse(raw);
-    } catch (error) {
-      if (error.code === "ENOENT") return null;
-      throw error;
-    }
-  }
-
-  async savePair(pair) {
-    await writeFile(this.pairJsonPath(pair.pair_id), JSON.stringify(pair, null, 2));
-  }
-
-  async listPairs() {
-    try {
-      return await readdir(this.pairsDir());
-    } catch (error) {
-      if (error.code === "ENOENT") return [];
-      throw error;
-    }
-  }
-
-  async getPairForCode(pairCode) {
-    const normalized = normalizePairCode(pairCode);
-    if (!isValidPairCode(normalized)) return null;
-    const targetHash = hashCredential(normalized);
-    for (const pairId of await this.listPairs()) {
-      const pair = await this.getPair(pairId);
-      if (pair && !pair.revoked_at && pair.pair_code_hash === targetHash) return pair;
-    }
-    return null;
-  }
-
-  async listDevices(pairId) {
-    try {
-      const names = await readdir(this.pairDevicesDir(pairId));
-      const devices = [];
-      for (const name of names) {
-        if (!name.endsWith(".json")) continue;
-        devices.push(JSON.parse(await readFile(path.join(this.pairDevicesDir(pairId), name), "utf8")));
-      }
-      return devices;
-    } catch (error) {
-      if (error.code === "ENOENT") return [];
-      throw error;
-    }
-  }
-
-  async getPairForDeviceToken(deviceToken) {
-    const targetHash = hashCredential(deviceToken);
-    for (const pairId of await this.listPairs()) {
-      const pair = await this.getPair(pairId);
-      if (!pair || pair.revoked_at) continue;
-      for (const device of await this.listDevices(pairId)) {
-        if (!device.revoked_at && device.device_token_hash === targetHash) {
-          return { pair, device };
-        }
-      }
-    }
-    return null;
-  }
-
-  async bindDeviceByPairCode({ pairCode, label = "" }) {
-    const pair = await this.getPairForCode(pairCode);
-    if (!pair) return null;
-    const now = this.now();
-    const deviceToken = makePairDeviceToken();
-    const deviceId = makePairDeviceId(now);
-    const device = {
-      device_id: deviceId,
-      pair_id: pair.pair_id,
-      device_token_hash: hashCredential(deviceToken),
-      created_at: now.toISOString(),
-      last_seen_at: now.toISOString(),
-      revoked_at: null,
-      label: String(label ?? "").slice(0, 120)
-    };
-    pair.last_seen_at = now.toISOString();
-    await this.savePair(pair);
-    await writeFile(this.pairDeviceJsonPath(pair.pair_id, deviceId), JSON.stringify(device, null, 2));
-    return { pair, pair_device_token: deviceToken };
-  }
-
-  async rotatePairCode({ deviceToken }) {
-    const resolved = await this.getPairForDeviceToken(deviceToken);
-    if (!resolved) return null;
-    const now = this.now();
-    const pairCode = makePairCode();
-    resolved.pair.pair_code_hash = hashCredential(normalizePairCode(pairCode));
-    resolved.pair.last_seen_at = now.toISOString();
-    await this.savePair(resolved.pair);
-    for (const device of await this.listDevices(resolved.pair.pair_id)) {
-      if (device.device_id === resolved.device.device_id) continue;
-      if (!device.revoked_at) {
-        device.revoked_at = now.toISOString();
-        await writeFile(
-          this.pairDeviceJsonPath(resolved.pair.pair_id, device.device_id),
-          JSON.stringify(device, null, 2)
-        );
-      }
-    }
-    return { pair: resolved.pair, pair_code: pairCode };
-  }
-
-  async listSessionsForPair(pairId) {
-    try {
-      const sessionIds = await readdir(this.pairSessionsDir(pairId));
-      const sessions = [];
-      for (const sessionId of sessionIds) {
-        const session = await this.getPairSession(pairId, sessionId);
-        if (session) sessions.push(session);
-      }
-      return sessions.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
-    } catch (error) {
-      if (error.code === "ENOENT") return [];
-      throw error;
-    }
-  }
-
-  async getPairSession(pairId, sessionId) {
-    try {
-      const raw = await readFile(path.join(this.pairSessionDir(pairId, sessionId), "session.json"), "utf8");
-      return JSON.parse(raw);
-    } catch (error) {
-      if (error.code === "ENOENT") return null;
-      throw error;
-    }
   }
 }
 
-export function publicSession(session) {
+export function publicSession(session, access) {
   return {
     session_id: session.session_id,
     title: session.title,
-    viewer_url: session.viewer_url,
+    ...(access ? { access } : {}),
+    ...(access === "owner"
+      ? {
+          view_url: shortShareUrl("view", session),
+          edit_url: shortShareUrl("edit", session)
+        }
+      : {}),
     expires_at: session.expires_at,
-    screenshots: session.screenshots,
-    annotations: session.annotations
+    retention_hours: session.retention_hours ?? DEFAULT_RETENTION_HOURS,
+    screenshots: session.screenshots.map(publicScreenshot),
+    annotations: session.annotations.map(publicAnnotation)
   };
+}
+
+export function publicScreenshot(screenshot) {
+  return {
+    screenshot_id: screenshot.screenshot_id,
+    page_index: screenshot.page_index,
+    label: screenshot.label,
+    image_url: screenshot.image_url,
+    width: screenshot.width,
+    height: screenshot.height
+  };
+}
+
+export function publicAnnotation(annotation) {
+  return {
+    annotation_id: annotation.annotation_id,
+    screenshot_id: annotation.screenshot_id,
+    page_index: annotation.page_index,
+    merged_png_url: annotation.merged_png_url,
+    revision: annotation.revision ?? 1,
+    width: annotation.width,
+    height: annotation.height,
+    updated_at: annotation.updated_at
+  };
+}
+
+function toSessionRow(session) {
+  return {
+    session_id: session.session_id,
+    title: session.title,
+    view_token: session.view_token,
+    edit_token: session.edit_token,
+    owner_token: session.owner_token,
+    view_token_hash: session.view_token_hash,
+    edit_token_hash: session.edit_token_hash,
+    owner_token_hash: session.owner_token_hash,
+    idempotency_key_hash: session.idempotency_key_hash,
+    status: session.status,
+    created_at: session.created_at,
+    updated_at: session.updated_at,
+    expires_at: session.expires_at,
+    retention_hours: session.retention_hours
+  };
+}
+
+function fromSessionRow(row) {
+  return {
+    session_id: row.session_id,
+    title: row.title,
+    view_token: row.view_token,
+    edit_token: row.edit_token,
+    owner_token: row.owner_token,
+    view_token_hash: row.view_token_hash,
+    edit_token_hash: row.edit_token_hash,
+    owner_token_hash: row.owner_token_hash,
+    idempotency_key_hash: row.idempotency_key_hash,
+    status: row.status,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    expires_at: row.expires_at,
+    retention_hours: row.retention_hours
+  };
+}
+
+function fromScreenshotRow(row) {
+  return {
+    screenshot_id: row.screenshot_id,
+    page_index: row.page_index,
+    label: row.label,
+    image_url: row.image_url,
+    width: row.width,
+    height: row.height,
+    byte_size: row.byte_size
+  };
+}
+
+function fromResultRow(row) {
+  return {
+    annotation_id: row.annotation_id,
+    screenshot_id: row.screenshot_id,
+    page_index: row.page_index,
+    merged_png_url: row.merged_png_url,
+    revision: row.revision,
+    width: row.width,
+    height: row.height,
+    byte_size: row.byte_size,
+    updated_at: row.updated_at
+  };
+}
+
+function normalizeRetentionHours(value) {
+  return Math.min(MAX_RETENTION_HOURS, Math.max(1, Number(value) || DEFAULT_RETENTION_HOURS));
+}
+
+function addHours(date, hours) {
+  return new Date(date.getTime() + hours * 60 * 60 * 1000);
+}
+
+function shortShareUrl(mode, session) {
+  const token = mode === "view" ? session.view_token : session.edit_token;
+  const pathMode = mode === "view" ? "v" : "e";
+  if (!token) return "";
+  return `${sessionPublicBaseUrl(session)}/${pathMode}/${token}`;
+}
+
+function sessionPublicBaseUrl(session) {
+  return session.public_base_url ?? "";
 }

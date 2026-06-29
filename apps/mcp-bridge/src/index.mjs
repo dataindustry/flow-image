@@ -23,8 +23,7 @@ export function createServer() {
   server.tool(
     "ui_collect_annotations",
     {
-      session_id: z.string().min(1).optional(),
-      session_secret: z.string().min(1).optional()
+      session_id: z.string().min(1).optional()
     },
     async (args) => collectAnnotations(args)
   );

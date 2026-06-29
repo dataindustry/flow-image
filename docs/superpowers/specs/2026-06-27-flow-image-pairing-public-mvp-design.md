@@ -23,7 +23,7 @@ The FlowImage Codex integration is configured with:
 
 ```bash
 FLOWIMAGE_SERVER_URL=https://flow-image.like-water.net
-FLOWIMAGE_PAIR_CODE=FIMG-K7Q9-M4TN-X8PA-R2CZ-V6DZ-J3WY
+FLOWIMAGE_PAIR_CODE=<your-generated-pair-code>
 ```
 
 The pair code is created from the iPad/Web side first. The user opens the FlowImage server, generates a long-lived private pair code, then copies that pair code into the Codex MCP bridge/plugin configuration. After that, Codex and the iPad/Web page are paired through the same FlowImage backend. Codex can publish screenshots into that pair; the iPad can see only sessions belonging to that pair; annotations are returned only to a Codex integration holding the same pair code.
@@ -99,17 +99,17 @@ The integration has exactly two required public-mode settings:
 
 ```bash
 FLOWIMAGE_SERVER_URL=https://flow-image.like-water.net
-FLOWIMAGE_PAIR_CODE=FIMG-K7Q9-M4TN-X8PA-R2CZ-V6DZ-J3WY
+FLOWIMAGE_PAIR_CODE=<your-generated-pair-code>
 ```
 
 Self-hosted users set:
 
 ```bash
 FLOWIMAGE_SERVER_URL=https://my-flow-image.example.com
-FLOWIMAGE_PAIR_CODE=FIMG-H8RM-Q6WD-P9TA-C3VY-N5ZX-B4GS
+FLOWIMAGE_PAIR_CODE=<your-generated-pair-code>
 ```
 
-For current local development, `PUBLIC_BASE_URL` and `BRIDGE_TOKEN` may continue to exist as compatibility variables. Public paired mode must not rely on a global `BRIDGE_TOKEN`; `FLOWIMAGE_PAIR_CODE` is the user-scoped credential.
+Local development uses the same Pair Mode contract: run the server locally, generate a pair code in the web page, then register the MCP bridge with `FLOWIMAGE_SERVER_URL=http://127.0.0.1:3939` and that generated `FLOWIMAGE_PAIR_CODE`.
 
 ### 5.3 Publish Screenshots
 
@@ -305,15 +305,15 @@ Required public-mode environment variables:
 
 ```bash
 FLOWIMAGE_SERVER_URL=https://flow-image.like-water.net
-FLOWIMAGE_PAIR_CODE=FIMG-K7Q9-M4TN-X8PA-R2CZ-V6DZ-J3WY
+FLOWIMAGE_PAIR_CODE=<your-generated-pair-code>
 ```
 
 Tool changes:
 
-| Tool | Current MVP | Public pairing mode |
-|---|---|---|
-| `ui_publish_screenshots` | Requires local PNG paths and creates a secret session via `BRIDGE_TOKEN`. | Requires local PNG paths and creates a pair-scoped session via `FLOWIMAGE_PAIR_CODE`. |
-| `ui_collect_annotations` | Requires `session_id` and `session_secret`. | Accepts optional `session_id`; pair auth comes from `FLOWIMAGE_PAIR_CODE`. If `session_id` is omitted, the bridge collects the most recent `returned` or `partially_returned` session for the configured pair. |
+| Tool | Pair Mode behavior |
+|---|---|
+| `ui_publish_screenshots` | Requires local PNG paths and creates a pair-scoped session via `FLOWIMAGE_PAIR_CODE`. |
+| `ui_collect_annotations` | Accepts optional `session_id`; pair auth comes from `FLOWIMAGE_PAIR_CODE`. If `session_id` is omitted, the bridge collects the most recent `returned` or `partially_returned` session for the configured pair. |
 
 Tool result rules:
 
@@ -421,26 +421,22 @@ This protects the user from accidental or poor-quality annotations being applied
 
 These risks are acceptable for an accountless MVP because the pair code is explicitly treated as a private credential.
 
-## 13. Compatibility And Migration
-
-The local MVP remains useful:
+## 13. Local Development
 
 ```bash
-BRIDGE_TOKEN=dev-token PUBLIC_BASE_URL=http://127.0.0.1:3939 pnpm dev:backend
+PUBLIC_BASE_URL=http://127.0.0.1:3939 pnpm dev:backend
 ```
 
-Public pairing mode introduces:
+After the server starts, open the FlowImage web page, generate a pair code, then register the MCP bridge:
 
 ```bash
-FLOWIMAGE_SERVER_URL=https://flow-image.like-water.net
-FLOWIMAGE_PAIR_CODE=FIMG-K7Q9-M4TN-X8PA-R2CZ-V6DZ-J3WY
+codex mcp add flow_image \
+  --env FLOWIMAGE_SERVER_URL=http://127.0.0.1:3939 \
+  --env FLOWIMAGE_PAIR_CODE=<your-generated-pair-code> \
+  -- node /absolute/path/to/flow-image/apps/mcp-bridge/src/index.mjs
 ```
 
-Implementation should support both modes during transition:
-
-- If `FLOWIMAGE_PAIR_CODE` is present, use public pair mode.
-- If `FLOWIMAGE_PAIR_CODE` is absent and `BRIDGE_TOKEN` is present, use local legacy mode.
-- README should lead with pair mode once implemented; local legacy mode can move to a development section.
+There is no legacy `BRIDGE_TOKEN` or session-secret mode in the MVP.
 
 ## 14. Testing Requirements
 

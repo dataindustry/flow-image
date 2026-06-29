@@ -1,6 +1,6 @@
 import { describe, expect, test, beforeEach, afterEach } from "vitest";
 import request from "supertest";
-import { mkdtemp, rm, readFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createApp } from "../src/server.mjs";
@@ -13,14 +13,15 @@ const png1x1 = Buffer.from(
 
 let dataDir;
 let app;
+let now;
 
 beforeEach(async () => {
   dataDir = await mkdtemp(path.join(tmpdir(), "flow-image-"));
+  now = new Date("2026-06-27T10:00:00.000Z");
   app = createApp({
     dataDir,
-    bridgeToken: "test-token",
     publicBaseUrl: "https://example.test",
-    now: () => new Date("2026-06-27T10:00:00.000Z")
+    now: () => now
   });
 });
 
@@ -28,202 +29,374 @@ afterEach(async () => {
   await rm(dataDir, { recursive: true, force: true });
 });
 
-describe("sessions", () => {
-  test("requires bridge token to create a session", async () => {
-    const res = await request(app).post("/api/sessions").send({ title: "Settings" });
-
-    expect(res.status).toBe(403);
-  });
-
-  test("creates a session with public viewer url", async () => {
-    const res = await request(app)
-      .post("/api/sessions")
-      .set("X-Bridge-Token", "test-token")
-      .send({ title: "Settings" });
-
-    expect(res.status).toBe(200);
-    expect(res.body.session_id).toMatch(/^sess_20260627_[0-9a-f]{16}$/);
-    expect(res.body.session_secret).toMatch(/^sec_[A-Za-z0-9_-]{32}$/);
-    expect(res.body.viewer_url).toBe(
-      `https://example.test/s/${res.body.session_id}?secret=${res.body.session_secret}`
-    );
-    expect(res.body.expires_at).toBe("2026-06-28T10:00:00.000Z");
-  });
-
-  test("reads session only with secret", async () => {
-    const create = await request(app)
-      .post("/api/sessions")
-      .set("X-Bridge-Token", "test-token")
-      .send({ title: "Settings" });
-
-    const denied = await request(app).get(`/api/sessions/${create.body.session_id}`);
-    expect(denied.status).toBe(401);
-
-    const ok = await request(app)
-      .get(`/api/sessions/${create.body.session_id}`)
-      .query({ secret: create.body.session_secret });
-    expect(ok.status).toBe(200);
-    expect(ok.body.title).toBe("Settings");
-    expect(ok.body.screenshots).toEqual([]);
-    expect(ok.body.annotations).toEqual([]);
-  });
-});
-
-async function createPair(label = "iPad Safari") {
-  const res = await request(app).post("/api/pairs").send({ label });
-  expect(res.status).toBe(200);
-  return res.body;
+function shareParts(url) {
+  const parsed = new URL(url);
+  const [, mode, token] = parsed.pathname.split("/");
+  return { mode, token, hash: parsed.hash };
 }
 
-describe("public pairs", () => {
-  test("creates a pair with a long one-time pair code and stores only hashes", async () => {
-    const pair = await createPair();
+async function createLinkSession(title = "Settings") {
+  const session = await request(app).post("/api/sessions").send({ title });
+  expect(session.status).toBe(200);
+  return {
+    session: session.body,
+    view: shareParts(session.body.view_url),
+    edit: shareParts(session.body.edit_url),
+    owner: shareParts(session.body.owner_url)
+  };
+}
 
-    expect(pair.pair_id).toMatch(/^pair_20260627_[0-9a-f]{16}$/);
-    expect(pair.pair_code).toMatch(
-      /^FIMG-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/
-    );
-    expect(pair.pair_device_token).toMatch(/^pdevtok_[A-Za-z0-9_-]{32,}$/);
+async function uploadScreenshot(session) {
+  const upload = await request(app)
+    .post(`/api/sessions/${session.session_id}/screenshots`)
+    .set("X-FlowImage-Owner-Token", session.owner_token)
+    .attach("files[]", png1x1, { filename: "shot.png", contentType: "image/png" });
+  expect(upload.status).toBe(200);
+  return upload.body.items[0];
+}
 
-    const pairJson = await readFile(
-      path.join(dataDir, "pairs", pair.pair_id, "pair.json"),
-      "utf8"
-    );
-    expect(pairJson).not.toContain(pair.pair_code);
-    expect(pairJson).toContain("pair_code_hash");
+describe("link-scoped sessions", () => {
+  test("creates short view, edit, and owner capability links with recoverable share tokens", async () => {
+    const { session, view, edit, owner } = await createLinkSession();
+
+    expect(session.session_id).toMatch(/^sess_20260627_[0-9a-f]{16}$/);
+    expect(view).toMatchObject({ mode: "v" });
+    expect(edit).toMatchObject({ mode: "e" });
+    expect(owner).toMatchObject({ mode: "o" });
+    expect(view.token).toMatch(/^[A-Za-z0-9_-]{12}$/);
+    expect(edit.token).toMatch(/^[A-Za-z0-9_-]{12}$/);
+    expect(owner.token).toMatch(/^[A-Za-z0-9_-]{12}$/);
+    expect(session.viewer_url).toBeUndefined();
+    expect(session.view_url).toBe(`https://example.test/v/${view.token}`);
+    expect(session.edit_url).toBe(`https://example.test/e/${edit.token}`);
+    expect(session.owner_url).toBe(`https://example.test/o/${owner.token}`);
+    expect(session.owner_url).not.toContain("#");
+    expect(session.expires_at).toBe("2026-07-04T10:00:00.000Z");
+    expect(session.retention_hours).toBe(168);
+
+    const row = app.locals.store.db.prepare("SELECT * FROM sessions WHERE session_id = ?").get(session.session_id);
+    expect(row.view_token).toBe(view.token);
+    expect(row.edit_token).toBe(edit.token);
+    expect(row.owner_token).toBe(owner.token);
+    expect(row.view_token_hash).toBeTruthy();
+    expect(row.edit_token_hash).toBeTruthy();
+    expect(row.owner_token_hash).toBeTruthy();
+    await expect(
+      access(path.join(dataDir, "sessions", session.session_id, "session.json"))
+    ).rejects.toThrow();
   });
 
-  test("binds another device with pair code and lists only current pair sessions", async () => {
-    const pair = await createPair();
-    const bound = await request(app)
-      .post("/api/pairs/bind-device")
-      .send({ pair_code: pair.pair_code, label: "Mac Safari" });
+  test("uses short token-only share lookups and returns owner share URLs only to owner", async () => {
+    const { session, view, edit, owner } = await createLinkSession();
+    await uploadScreenshot(session);
 
-    expect(bound.status).toBe(200);
-    expect(bound.body.pair_id).toBe(pair.pair_id);
-    expect(bound.body.pair_device_token).toMatch(/^pdevtok_/);
+    const viewSession = await request(app).get(`/api/share/view/${view.token}`);
+    expect(viewSession.status).toBe(200);
+    expect(viewSession.body.access).toBe("view");
+    expect(viewSession.body.screenshots).toHaveLength(1);
+    expect(viewSession.body.view_url).toBeUndefined();
+    expect(viewSession.body.edit_url).toBeUndefined();
 
-    const current = await request(app)
-      .get("/api/pairs/current")
-      .set("X-Pair-Device-Token", bound.body.pair_device_token);
+    const editSession = await request(app).get(`/api/share/edit/${edit.token}`);
+    expect(editSession.status).toBe(200);
+    expect(editSession.body.access).toBe("edit");
+    expect(editSession.body.view_url).toBeUndefined();
+    expect(editSession.body.edit_url).toBeUndefined();
 
-    expect(current.status).toBe(200);
-    expect(current.body.pair_id).toBe(pair.pair_id);
-    expect(current.body.sessions).toEqual([]);
+    const ownerSession = await request(app).get(`/api/share/owner/${owner.token}`);
+    expect(ownerSession.status).toBe(200);
+    expect(ownerSession.body.access).toBe("owner");
+    expect(ownerSession.body.view_url).toBe(session.view_url);
+    expect(ownerSession.body.edit_url).toBe(session.edit_url);
+
+    const wrongMode = await request(app).get(`/api/share/edit/${view.token}`);
+    expect(wrongMode.status).toBe(403);
+
+    const oldLongRoute = await request(app).get(`/api/share/view/${session.session_id}/${view.token}`);
+    expect(oldLongRoute.status).toBe(404);
   });
 
-  test("rotating a pair code revokes other devices and old code", async () => {
-    const pair = await createPair();
-    const bound = await request(app)
-      .post("/api/pairs/bind-device")
-      .send({ pair_code: pair.pair_code, label: "Second browser" });
-    expect(bound.status).toBe(200);
+  test("separates view, edit, and owner permissions on API operations", async () => {
+    const { session, view, edit } = await createLinkSession();
+    const screenshot = await uploadScreenshot(session);
 
-    const rotated = await request(app)
-      .post("/api/pairs/rotate-code")
-      .set("X-Pair-Device-Token", pair.pair_device_token);
+    const viewFile = await request(app)
+      .get(`/files/sessions/${session.session_id}/screenshots/${screenshot.screenshot_id}.png`)
+      .set("X-FlowImage-View-Token", view.token);
+    expect(viewFile.status).toBe(200);
+    expect(Buffer.from(viewFile.body)).toEqual(png1x1);
 
-    expect(rotated.status).toBe(200);
-    expect(rotated.body.pair_code).toMatch(
-      /^FIMG-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/
+    const viewCannotSave = await request(app)
+      .post(`/api/sessions/${session.session_id}/annotations/${screenshot.screenshot_id}`)
+      .set("X-FlowImage-View-Token", view.token)
+      .attach("merged_png", png1x1, { filename: "merged.png", contentType: "image/png" });
+    expect(viewCannotSave.status).toBe(401);
+
+    const editCanSave = await request(app)
+      .post(`/api/sessions/${session.session_id}/annotations/${screenshot.screenshot_id}`)
+      .set("X-FlowImage-Edit-Token", edit.token)
+      .attach("merged_png", png1x1, { filename: "merged.png", contentType: "image/png" });
+    expect(editCanSave.status).toBe(200);
+    expect(editCanSave.body.revision).toBe(1);
+
+    const ownerCanSave = await request(app)
+      .post(`/api/sessions/${session.session_id}/annotations/${screenshot.screenshot_id}`)
+      .set("X-FlowImage-Owner-Token", session.owner_token)
+      .attach("merged_png", png1x1, { filename: "merged.png", contentType: "image/png" });
+    expect(ownerCanSave.status).toBe(200);
+    expect(ownerCanSave.body.revision).toBe(2);
+
+    const ownerCollect = await request(app)
+      .post(`/api/sessions/${session.session_id}/annotations/collect`)
+      .set("X-FlowImage-Owner-Token", session.owner_token);
+    expect(ownerCollect.status).toBe(200);
+    expect(ownerCollect.body.ready_count).toBe(1);
+    expect(ownerCollect.body.review_url).toBeUndefined();
+  });
+
+  test("lets owner set retention in hours or days and rejects non-owner changes", async () => {
+    const { session, view } = await createLinkSession();
+
+    now = new Date("2026-06-27T11:00:00.000Z");
+    const denied = await request(app)
+      .patch(`/api/sessions/${session.session_id}/retention`)
+      .set("X-FlowImage-View-Token", view.token)
+      .send({ value: 12, unit: "hours" });
+    expect(denied.status).toBe(401);
+
+    const savedHours = await request(app)
+      .patch(`/api/sessions/${session.session_id}/retention`)
+      .set("X-FlowImage-Owner-Token", session.owner_token)
+      .send({ value: 12, unit: "hours" });
+    expect(savedHours.status).toBe(200);
+    expect(savedHours.body.retention_hours).toBe(12);
+    expect(savedHours.body.expires_at).toBe("2026-06-27T23:00:00.000Z");
+
+    const savedDays = await request(app)
+      .patch(`/api/sessions/${session.session_id}/retention`)
+      .set("X-FlowImage-Owner-Token", session.owner_token)
+      .send({ value: 2, unit: "days" });
+    expect(savedDays.status).toBe(200);
+    expect(savedDays.body.retention_hours).toBe(48);
+    expect(savedDays.body.expires_at).toBe("2026-06-29T11:00:00.000Z");
+  });
+
+  test("cleans up expired standalone sessions during new session creation", async () => {
+    const { session } = await createLinkSession("Old");
+    const oldPath = path.join(dataDir, "files", "sessions", session.session_id);
+    await access(oldPath);
+
+    now = new Date("2026-07-05T10:00:00.000Z");
+    const fresh = await request(app).post("/api/sessions").send({ title: "Fresh" });
+    expect(fresh.status).toBe(200);
+    await expect(access(oldPath)).rejects.toThrow();
+  });
+
+  test("removes legacy pair and /s entrypoints from the server surface", async () => {
+    const pair = await request(app).post("/api/pairs").send({ label: "iPad" });
+    expect(pair.status).toBe(404);
+
+    const legacy = await request(app).get("/s/sess_20260627_deadbeefdeadbeef");
+    expect(legacy.status).toBe(404);
+  });
+
+  test("stores screenshot files under the SQLite data files tree", async () => {
+    const { session } = await createLinkSession();
+    const screenshot = await uploadScreenshot(session);
+
+    await access(
+      path.join(
+        dataDir,
+        "files",
+        "sessions",
+        session.session_id,
+        "screenshots",
+        `${screenshot.screenshot_id}.png`
+      )
     );
-    expect(rotated.body.pair_code).not.toBe(pair.pair_code);
+  });
 
-    const oldCode = await request(app)
-      .post("/api/pairs/bind-device")
-      .send({ pair_code: pair.pair_code, label: "Old code" });
-    expect(oldCode.status).toBe(403);
+  test("keeps GET root side-effect free", async () => {
+    expect(app.locals.store.db.prepare("SELECT COUNT(*) AS total FROM sessions").get().total).toBe(0);
 
-    const revokedDevice = await request(app)
-      .get("/api/pairs/current")
-      .set("X-Pair-Device-Token", bound.body.pair_device_token);
-    expect(revokedDevice.status).toBe(403);
+    const root = await request(app).get("/");
+
+    expect(root.status).toBe(200);
+    expect(app.locals.store.db.prepare("SELECT COUNT(*) AS total FROM sessions").get().total).toBe(0);
+  });
+
+  test("idempotently creates one default blank canvas for the same root key", async () => {
+    const first = await request(app)
+      .post("/api/sessions")
+      .send({
+        title: "Untitled FlowImage",
+        default_page: "blank_grid",
+        idempotency_key: "root-key-1"
+      });
+    const second = await request(app)
+      .post("/api/sessions")
+      .send({
+        title: "Ignored Retry Title",
+        default_page: "blank_grid",
+        idempotency_key: "root-key-1"
+      });
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(second.body).toMatchObject({
+      session_id: first.body.session_id,
+      view_url: first.body.view_url,
+      edit_url: first.body.edit_url,
+      owner_url: first.body.owner_url,
+      owner_token: first.body.owner_token
+    });
+    expect(app.locals.store.db.prepare("SELECT COUNT(*) AS total FROM sessions").get().total).toBe(1);
+    expect(app.locals.store.db.prepare("SELECT COUNT(*) AS total FROM screenshots").get().total).toBe(1);
+
+    const page = app.locals.store.db.prepare("SELECT * FROM screenshots").get();
+    expect(page).toMatchObject({
+      session_id: first.body.session_id,
+      page_index: 1,
+      label: "Blank canvas",
+      width: 1440,
+      height: 900
+    });
+    await access(
+      path.join(dataDir, "files", "sessions", first.body.session_id, "screenshots", `${page.screenshot_id}.png`)
+    );
+  });
+
+  test("creates different sessions for different root idempotency keys", async () => {
+    const first = await request(app)
+      .post("/api/sessions")
+      .send({ title: "One", default_page: "blank_grid", idempotency_key: "root-key-a" });
+    const second = await request(app)
+      .post("/api/sessions")
+      .send({ title: "Two", default_page: "blank_grid", idempotency_key: "root-key-b" });
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(second.body.session_id).not.toBe(first.body.session_id);
+    expect(app.locals.store.db.prepare("SELECT COUNT(*) AS total FROM sessions").get().total).toBe(2);
   });
 });
 
-describe("pair-scoped sessions", () => {
-  test("creates a public pair session without leaking a session secret", async () => {
-    const pair = await createPair();
+describe("qr endpoint", () => {
+  test("returns a real SVG QR image for share links", async () => {
+    const qr = await request(app)
+      .post("/api/qr")
+      .send({ text: "https://example.test/edit/sess/token" });
 
-    const res = await request(app)
-      .post("/api/sessions")
-      .set("X-FlowImage-Pair-Code", pair.pair_code)
-      .send({ title: "Settings" });
-
-    expect(res.status).toBe(200);
-    expect(res.body.session_id).toMatch(/^sess_20260627_[0-9a-f]{16}$/);
-    expect(res.body.session_secret).toBeUndefined();
-    expect(res.body.viewer_url).toBe(`https://example.test/s/${res.body.session_id}`);
-    expect(res.body.status).toBe("pending_annotation");
-    expect(res.body.expires_at).toBe("2026-07-04T10:00:00.000Z");
+    expect(qr.status).toBe(200);
+    expect(qr.headers["content-type"]).toContain("image/svg+xml");
+    expect(Buffer.from(qr.body).toString("utf8")).toContain("<svg");
   });
 
-  test("uploads screenshots with pair code and reads files with device token", async () => {
-    const pair = await createPair();
-    const session = await request(app)
-      .post("/api/sessions")
-      .set("X-FlowImage-Pair-Code", pair.pair_code)
-      .send({ title: "Settings" });
+  test("rejects empty and oversized QR payloads", async () => {
+    const empty = await request(app).post("/api/qr").send({ text: "" });
+    const tooLong = await request(app).post("/api/qr").send({ text: "x".repeat(2049) });
 
-    const upload = await request(app)
-      .post(`/api/sessions/${session.body.session_id}/screenshots`)
-      .set("X-FlowImage-Pair-Code", pair.pair_code)
-      .field("labels[]", "Settings page")
-      .attach("files[]", png1x1, { filename: "shot.png", contentType: "image/png" });
+    expect(empty.status).toBe(400);
+    expect(tooLong.status).toBe(400);
+  });
+});
 
-    expect(upload.status).toBe(200);
-    expect(upload.body.items[0]).toMatchObject({
-      screenshot_id: "shot_0001",
-      label: "Settings page",
-      image_url: `/files/sessions/${session.body.session_id}/screenshots/shot_0001.png`
+describe("built-in rate limits", () => {
+  test("limits public session creation in-process", async () => {
+    const limited = createApp({
+      dataDir,
+      publicBaseUrl: "https://example.test",
+      now: () => now,
+      rateLimit: {
+        enabled: true,
+        windowMs: 60_000,
+        createLimit: 1
+      }
     });
 
-    const ok = await request(app)
-      .get(`/files/sessions/${session.body.session_id}/screenshots/shot_0001.png`)
-      .set("X-Pair-Device-Token", pair.pair_device_token);
-    expect(ok.status).toBe(200);
-    expect(Buffer.from(ok.body)).toEqual(png1x1);
+    expect((await request(limited).post("/api/sessions").send({ title: "One" })).status).toBe(200);
+    const blocked = await request(limited).post("/api/sessions").send({ title: "Two" });
 
-    const otherPair = await createPair("Other iPad");
-    const denied = await request(app)
-      .get(`/files/sessions/${session.body.session_id}/screenshots/shot_0001.png`)
-      .set("X-Pair-Device-Token", otherPair.pair_device_token);
-    expect(denied.status).toBe(404);
+    expect(blocked.status).toBe(429);
+    expect(blocked.body.error).toBe("rate_limited");
+    expect(blocked.headers["retry-after"]).toBeDefined();
   });
 
-  test("uploads annotations with device token and collects ready pages with pair code", async () => {
-    const pair = await createPair();
-    const session = await request(app)
-      .post("/api/sessions")
-      .set("X-FlowImage-Pair-Code", pair.pair_code)
-      .send({ title: "Settings" });
-    const upload = await request(app)
-      .post(`/api/sessions/${session.body.session_id}/screenshots`)
-      .set("X-FlowImage-Pair-Code", pair.pair_code)
+  test("enforces per-session storage limits", async () => {
+    const constrained = createApp({
+      dataDir,
+      publicBaseUrl: "https://example.test",
+      now: () => now,
+      rateLimit: {
+        enabled: true,
+        sessionBytesLimit: png1x1.length - 1
+      }
+    });
+    const created = await request(constrained).post("/api/sessions").send({ title: "Bytes" });
+
+    const upload = await request(constrained)
+      .post(`/api/sessions/${created.body.session_id}/screenshots`)
+      .set("X-FlowImage-Owner-Token", created.body.owner_token)
       .attach("files[]", png1x1, { filename: "shot.png", contentType: "image/png" });
-    const screenshotId = upload.body.items[0].screenshot_id;
 
-    const annotation = await request(app)
-      .post(`/api/sessions/${session.body.session_id}/annotations/${screenshotId}`)
-      .set("X-Pair-Device-Token", pair.pair_device_token)
+    expect(upload.status).toBe(413);
+    expect(upload.body.error).toBe("session_storage_limit");
+  });
+
+  test("cleans expired rate limit buckets during cleanup", async () => {
+    const store = app.locals.store;
+    store.db
+      .prepare("INSERT INTO rate_limits (bucket_key, count, bytes, reset_at) VALUES (?, ?, ?, ?)")
+      .run("expired", 1, 0, now.getTime() - 1);
+    store.db
+      .prepare("INSERT INTO rate_limits (bucket_key, count, bytes, reset_at) VALUES (?, ?, ?, ?)")
+      .run("active", 1, 0, now.getTime() + 60_000);
+
+    await store.cleanupExpiredSessions();
+
+    const keys = store.db
+      .prepare("SELECT bucket_key FROM rate_limits ORDER BY bucket_key")
+      .all()
+      .map((row) => row.bucket_key);
+    expect(keys).toEqual(["active"]);
+  });
+});
+
+describe("sqlite storage", () => {
+  test("enables foreign key cascade for session children", async () => {
+    const { session, edit } = await createLinkSession();
+    const screenshot = await uploadScreenshot(session);
+    const store = app.locals.store;
+
+    const saved = await request(app)
+      .post(`/api/sessions/${session.session_id}/annotations/${screenshot.screenshot_id}`)
+      .set("X-FlowImage-Edit-Token", edit.token)
       .attach("merged_png", png1x1, { filename: "merged.png", contentType: "image/png" });
-    expect(annotation.status).toBe(200);
-    expect(annotation.body.ready).toBe(true);
+    expect(saved.status).toBe(200);
 
-    const collect = await request(app)
-      .post(`/api/sessions/${session.body.session_id}/annotations/collect`)
-      .set("X-FlowImage-Pair-Code", pair.pair_code);
-    expect(collect.status).toBe(200);
-    expect(collect.body.ready_count).toBe(1);
-    expect(collect.body.review_url).toBe(`https://example.test/s/${session.body.session_id}`);
-    expect(collect.body.items[0].merged_png_path).toMatch(/shot_0001-merged\.png$/);
+    expect(store.db.pragma("foreign_keys", { simple: true })).toBe(1);
+    store.db.prepare("DELETE FROM sessions WHERE session_id = ?").run(session.session_id);
 
-    const latest = await request(app)
-      .post("/api/annotations/collect-latest")
-      .set("X-FlowImage-Pair-Code", pair.pair_code);
-    expect(latest.status).toBe(200);
-    expect(latest.body.session_id).toBe(session.body.session_id);
-    expect(latest.body.ready_count).toBe(1);
+    expect(
+      store.db.prepare("SELECT COUNT(*) AS total FROM screenshots WHERE session_id = ?").get(session.session_id)
+        .total
+    ).toBe(0);
+    expect(
+      store.db.prepare("SELECT COUNT(*) AS total FROM results WHERE session_id = ?").get(session.session_id)
+        .total
+    ).toBe(0);
+  });
+});
+
+describe("static frontend assets", () => {
+  test("serves app assets without browser caching during dev", async () => {
+    const appJs = await request(app).get("/app.js");
+    const css = await request(app).get("/styles.css");
+
+    expect(appJs.status).toBe(200);
+    expect(css.status).toBe(200);
+    expect(appJs.headers["cache-control"]).toBe("no-store");
+    expect(css.headers["cache-control"]).toBe("no-store");
   });
 });
 
@@ -233,8 +406,8 @@ describe("config", () => {
     const repoRoot = path.resolve(originalCwd, "../..");
     process.chdir(path.resolve(repoRoot, "apps/backend"));
     try {
-      const config = makeConfig({ bridgeToken: "x" });
-      expect(config.dataDir).toBe(path.resolve(repoRoot, "apps/backend/data/sessions"));
+      const config = makeConfig();
+      expect(config.dataDir).toBe(path.resolve(repoRoot, "apps/backend/data"));
     } finally {
       process.chdir(originalCwd);
     }
@@ -247,118 +420,5 @@ describe("static security headers", () => {
 
     expect(res.status).toBe(200);
     expect(res.headers["content-security-policy"]).toContain("default-src 'self'");
-    expect(res.headers["content-security-policy"]).toContain("img-src 'self' blob:");
-  });
-});
-
-async function createSession(title = "Settings") {
-  const res = await request(app)
-    .post("/api/sessions")
-    .set("X-Bridge-Token", "test-token")
-    .send({ title });
-  return res.body;
-}
-
-describe("screenshots and files", () => {
-  test("uploads PNG screenshots with generated filenames and IHDR dimensions", async () => {
-    const session = await createSession();
-
-    const res = await request(app)
-      .post(`/api/sessions/${session.session_id}/screenshots`)
-      .set("X-Session-Secret", session.session_secret)
-      .field("labels[]", "Settings page")
-      .attach("files[]", png1x1, { filename: "client-name.png", contentType: "image/png" });
-
-    expect(res.status).toBe(200);
-    expect(res.body.count).toBe(1);
-    expect(res.body.items[0]).toMatchObject({
-      screenshot_id: "shot_0001",
-      page_index: 1,
-      label: "Settings page",
-      image_url: `/files/sessions/${session.session_id}/screenshots/shot_0001.png`,
-      width: 1,
-      height: 1
-    });
-  });
-
-  test("rejects non-PNG screenshots before storage", async () => {
-    const session = await createSession();
-
-    const res = await request(app)
-      .post(`/api/sessions/${session.session_id}/screenshots`)
-      .set("X-Session-Secret", session.session_secret)
-      .attach("files[]", Buffer.from("not a png"), {
-        filename: "bad.txt",
-        contentType: "text/plain"
-      });
-
-    expect(res.status).toBe(415);
-  });
-
-  test("requires secret and blocks traversal for file reads", async () => {
-    const session = await createSession();
-    await request(app)
-      .post(`/api/sessions/${session.session_id}/screenshots`)
-      .set("X-Session-Secret", session.session_secret)
-      .attach("files[]", png1x1, { filename: "shot.png", contentType: "image/png" });
-
-    const denied = await request(app).get(
-      `/files/sessions/${session.session_id}/screenshots/shot_0001.png`
-    );
-    expect(denied.status).toBe(401);
-
-    const traversal = await request(app)
-      .get(`/files/sessions/${session.session_id}/screenshots/..%2Fsession.json`)
-      .query({ secret: session.session_secret });
-    expect(traversal.status).toBe(400);
-
-    const ok = await request(app)
-      .get(`/files/sessions/${session.session_id}/screenshots/shot_0001.png`)
-      .query({ secret: session.session_secret });
-    expect(ok.status).toBe(200);
-    expect(ok.headers["content-type"]).toMatch(/image\/png/);
-    expect(Buffer.from(ok.body)).toEqual(png1x1);
-  });
-});
-
-describe("annotations", () => {
-  test("uploads merged annotation and exposes ready metadata with local path", async () => {
-    const session = await createSession();
-    const upload = await request(app)
-      .post(`/api/sessions/${session.session_id}/screenshots`)
-      .set("X-Session-Secret", session.session_secret)
-      .attach("files[]", png1x1, { filename: "shot.png", contentType: "image/png" });
-    const screenshotId = upload.body.items[0].screenshot_id;
-
-    const annotation = await request(app)
-      .post(`/api/sessions/${session.session_id}/annotations/${screenshotId}`)
-      .set("X-Session-Secret", session.session_secret)
-      .attach("merged_png", png1x1, { filename: "merged.png", contentType: "image/png" });
-
-    expect(annotation.status).toBe(200);
-    expect(annotation.body).toMatchObject({
-      annotation_id: "ann_0001",
-      ready: true,
-      merged_png_url: `/files/sessions/${session.session_id}/annotations/shot_0001-merged.png`
-    });
-
-    const ready = await request(app)
-      .get(`/api/sessions/${session.session_id}/annotations/ready`)
-      .query({ secret: session.session_secret });
-    expect(ready.status).toBe(200);
-    expect(ready.body.ready_count).toBe(1);
-    expect(ready.body.items[0].merged_png_path).toMatch(/shot_0001-merged\.png$/);
-  });
-
-  test("ready annotations returns zero before merged upload", async () => {
-    const session = await createSession();
-
-    const ready = await request(app)
-      .get(`/api/sessions/${session.session_id}/annotations/ready`)
-      .query({ secret: session.session_secret });
-
-    expect(ready.status).toBe(200);
-    expect(ready.body.ready_count).toBe(0);
-    expect(ready.body.items).toEqual([]);
   });
 });

@@ -1,0 +1,20 @@
+{
+  "name": "flow-image-local",
+  "interface": {
+    "displayName": "FlowImage Local"
+  },
+  "plugins": [
+    {
+      "name": "flow-image",
+      "source": {
+        "source": "local",
+        "path": "./plugins/flow-image"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
