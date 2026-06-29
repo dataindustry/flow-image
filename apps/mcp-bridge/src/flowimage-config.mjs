@@ -2,7 +2,7 @@ import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-export const DEFAULT_FLOWIMAGE_SERVER_URL = "https://flow-image.like-water.net";
+export const DEFAULT_FLOWIMAGE_SERVER_URL = "https://flow-image.liujinhang.com";
 
 export function defaultFlowImageConfigPath(env = process.env) {
   return env.FLOWIMAGE_CONFIG_PATH ?? path.join(os.homedir(), ".flowimage", "config.json");

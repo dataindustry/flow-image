@@ -174,9 +174,9 @@ describe("publishScreenshots", () => {
     await writeFile(filePath, png1x1);
     deps.backend.createSession.mockResolvedValue({
       session_id: "sess_link",
-      view_url: "https://flow-image.like-water.net/v/viewtoken12",
-      edit_url: "https://flow-image.like-water.net/e/edittoken12",
-      owner_url: "https://flow-image.like-water.net/o/owntoken123",
+      view_url: "https://flow-image.liujinhang.com/v/viewtoken12",
+      edit_url: "https://flow-image.liujinhang.com/e/edittoken12",
+      owner_url: "https://flow-image.liujinhang.com/o/owntoken123",
       owner_token: "own_link",
       status: "pending_annotation"
     });
@@ -252,12 +252,12 @@ describe("collectAnnotations", () => {
     deps.sessionRegistry.latest.mockReturnValue({
       sessionId: "sess_latest",
       ownerToken: "own_latest",
-      viewUrl: "https://flow-image.like-water.net/v/viewlatest12"
+      viewUrl: "https://flow-image.liujinhang.com/v/viewlatest12"
     });
     deps.backend.collectAnnotations.mockResolvedValue({
       session_id: "sess_latest",
       ready_count: 1,
-      review_url: "https://flow-image.like-water.net/s/sess_latest",
+      review_url: "https://flow-image.liujinhang.com/s/sess_latest",
       items: [
         {
           page_index: 1,
@@ -271,7 +271,7 @@ describe("collectAnnotations", () => {
 
     expect(deps.backend.collectAnnotations).toHaveBeenCalledWith("sess_latest", "own_latest");
     expect(result.content[0].text).toContain("请先目视检查");
-    expect(result.content[0].text).toContain("https://flow-image.like-water.net/v/viewlatest12");
+    expect(result.content[0].text).toContain("https://flow-image.liujinhang.com/v/viewlatest12");
     expect(result.content[0].text).toContain("结果图");
     expect(result.content[0].text).not.toContain("标注图");
     expect(result.content[1]).toMatchObject({

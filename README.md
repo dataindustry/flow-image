@@ -78,7 +78,7 @@ Then configure the FlowImage server URL:
 mkdir -p ~/.flowimage
 cat > ~/.flowimage/config.json <<'JSON'
 {
-  "server_url": "https://flow-image.like-water.net"
+  "server_url": "https://flow-image.liujinhang.com"
 }
 JSON
 chmod 600 ~/.flowimage/config.json
@@ -116,14 +116,14 @@ Set variables:
 
 ```bash
 FLOWIMAGE_REPO_URL="https://github.com/<github-owner>/flow-image"
-FLOWIMAGE_SERVER_URL="https://flow-image.like-water.net"
+FLOWIMAGE_SERVER_URL="https://flow-image.liujinhang.com"
 ```
 
 One-block install command for agents:
 
 ```bash
 FLOWIMAGE_REPO_URL="https://github.com/<github-owner>/flow-image" \
-FLOWIMAGE_SERVER_URL="https://flow-image.like-water.net" \
+FLOWIMAGE_SERVER_URL="https://flow-image.liujinhang.com" \
 bash <<'FLOWIMAGE_INSTALL'
 set -euo pipefail
 

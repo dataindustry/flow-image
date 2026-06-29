@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 
-const DEFAULT_SERVER_URL = "https://flow-image.like-water.net";
+const DEFAULT_SERVER_URL = "https://flow-image.liujinhang.com";
 
 export function defaultConfigPath(env = process.env) {
   return env.FLOWIMAGE_CONFIG_PATH ?? path.join(os.homedir(), ".flowimage", "config.json");
