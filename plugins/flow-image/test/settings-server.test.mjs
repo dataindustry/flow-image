@@ -1,10 +1,10 @@
 import { afterEach, test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, stat } from "node:fs/promises";
+import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { startSettingsServer } from "../scripts/settings-server.mjs";
+import { loadConfig, startSettingsServer } from "../scripts/settings-server.mjs";
 
 const servers = [];
 
@@ -38,6 +38,25 @@ test("plugin MCP config does not pin a user-specific config path", async () => {
   const mcpConfig = JSON.parse(await readFile(path.resolve(import.meta.dirname, "../.mcp.json"), "utf8"));
 
   assert.equal(mcpConfig.mcpServers.flow_image.env?.FLOWIMAGE_CONFIG_PATH, undefined);
+});
+
+test("settings config loading hides legacy pair code fields", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "flow-image-settings-"));
+  const configPath = path.join(dir, "config.json");
+  await writeFile(
+    configPath,
+    JSON.stringify({
+      server_url: "https://flow-image.liujinhang.com",
+      pair_code: "legacy",
+      pairCode: "legacyCamel"
+    })
+  );
+
+  const config = await loadConfig(configPath);
+
+  assert.equal(config.server_url, "https://flow-image.liujinhang.com");
+  assert.equal(config.pair_code, undefined);
+  assert.equal(config.pairCode, undefined);
 });
 
 test("plugin MCP launcher delegates startup to the bridge", async () => {

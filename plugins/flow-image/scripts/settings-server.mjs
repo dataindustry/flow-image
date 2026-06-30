@@ -15,6 +15,11 @@ function normalizeServerUrl(value) {
   return String(value ?? "").trim().replace(/\/$/, "");
 }
 
+function withoutDeprecatedConfig(config) {
+  const { pair_code, pairCode, ...rest } = config;
+  return rest;
+}
+
 async function readJsonBody(req) {
   const chunks = [];
   for await (const chunk of req) chunks.push(chunk);
@@ -24,7 +29,7 @@ async function readJsonBody(req) {
 
 export async function loadConfig(configPath) {
   try {
-    return JSON.parse(await readFile(configPath, "utf8"));
+    return withoutDeprecatedConfig(JSON.parse(await readFile(configPath, "utf8")));
   } catch (error) {
     if (error.code === "ENOENT") {
       return {
@@ -40,9 +45,8 @@ async function saveConfig(configPath, input) {
   if (!serverUrl) throw new Error("server_url is required");
 
   const existing = await loadConfig(configPath);
-  const { pair_code, pairCode, ...cleanExisting } = existing;
   const config = {
-    ...cleanExisting,
+    ...existing,
     server_url: serverUrl,
     updated_at: new Date().toISOString()
   };
