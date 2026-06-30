@@ -507,6 +507,8 @@ corepack pnpm@11.7.0 dev:check
 git diff --check
 ```
 
+`dev:check` checks localhost and the detected LAN URL by default. For production hosts or CI jobs that only bind localhost, set `FLOWIMAGE_CHECK_LAN=0`.
+
 ## Troubleshooting
 
 If the plugin is installed but tools do not appear:
