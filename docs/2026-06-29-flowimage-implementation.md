@@ -148,8 +148,10 @@ flowchart LR
 关键文件：
 
 - `src/index.mjs`：MCP server 入口。
-- `src/tools/publish.mjs`：`ui_publish_screenshots` 实现。
-- `src/tools/collect.mjs`：`ui_collect_annotations` 实现。
+- `src/tools/settings.mjs`：`flow_image_settings` 实现。
+- `src/tools/publish.mjs`：`flow_image_publish` 与 `flow_image_republish` 实现；旧 `ui_publish_screenshots` 作为兼容别名。
+- `src/tools/collect.mjs`：`flow_image_sync` 实现；旧 `ui_collect_annotations` 作为兼容别名。
+- `src/image-preprocess.mjs`：发布前 PNG 压缩与等比例缩放。
 - `src/backend-client.mjs`：后端 HTTP client。
 - `src/flowimage-config.mjs`：本地配置读取、写入、session 记忆。
 
@@ -161,11 +163,13 @@ flowchart LR
 
 - 给 Codex 提供 FlowImage 使用说明 skill。
 - 提供一个本地设置页脚本，用户可以配置 FlowImage server URL。
+- 提供插件 MCP 启动脚本，把 monorepo 内的 MCP bridge 显式连接到 stdio。
 - 设置保存到 `~/.flowimage/config.json`，权限为 `0600`。
 
 关键文件：
 
 - `skills/flow-image/SKILL.md`：Codex 使用 FlowImage 的操作说明。
+- `scripts/mcp-server.mjs`：插件 MCP launcher。
 - `scripts/settings-server.mjs`：本地设置页 HTTP server。
 - `test/settings-server.test.mjs`：设置页保存配置的测试。
 
@@ -236,7 +240,9 @@ POST /api/sessions
 
 ### 6.1 发布截图
 
-入口：MCP 工具 `ui_publish_screenshots`
+入口：MCP 工具 `flow_image_publish`。
+
+旧工具名 `ui_publish_screenshots` 仍作为兼容别名存在，但新的插件命令和 skill 文案只推荐 `flow_image_publish`。
 
 当前工具要求传入：
 
@@ -250,12 +256,21 @@ POST /api/sessions
 2. MCP bridge 调用 `POST /api/sessions` 创建 session。
 3. 后端生成 session id、view token、edit token、owner token。
 4. 后端保存 token hash 和 session 元数据。
-5. MCP bridge 用 owner token 调用 `POST /api/sessions/:sessionId/screenshots`。
-6. 后端校验 PNG 格式，解析宽高，写入截图文件。
-7. MCP bridge 把 `session_id`、`owner_token`、View/Edit/Owner 链接记入本地配置。
-8. MCP 工具返回 View/Edit/Owner 链接给 Codex 对话。
+5. MCP bridge 在上传前按配置压缩 PNG：默认长边不超过 1920px，不放大小图，缩放时保持原始长宽比；如果压缩后文件更大，则上传原图。
+6. MCP bridge 用 owner token 调用 `POST /api/sessions/:sessionId/screenshots`。
+7. 后端校验 PNG 格式，解析宽高，写入截图文件。
+8. MCP bridge 把 `session_id`、`owner_token`、View/Edit/Owner 链接记入本地配置。
+9. MCP 工具返回 View/Edit/Owner 链接给 Codex 对话。
 
 发布后，Codex 不应该立刻改代码，而是等待用户在 FlowImage 页面检查或编辑结果。
+
+### 6.1.1 更新同一个 Owner session
+
+入口：MCP 工具 `flow_image_republish`。
+
+该工具必须传入 `owner_url` 和新的本地截图路径数组。MCP bridge 会解析 Owner URL、取回该 session 的 owner token，然后向同一个 session 上传替换后的截图。它不会创建新 session。
+
+republish 的上传语义是替换当前 session 的截图与已有结果图，适合“同一个界面流程重新截图后继续用同一个 Owner 链接”的场景。
 
 ### 6.2 查看 session
 
@@ -336,7 +351,9 @@ data/sessions/<sessionId>/annotations/<screenshotId>-merged.png
 
 ### 6.5 Owner 收取结果
 
-入口：MCP 工具 `ui_collect_annotations` 或 owner token API。
+入口：MCP 工具 `flow_image_sync` 或 owner token API。
+
+旧工具名 `ui_collect_annotations` 仍作为兼容别名存在。
 
 流程：
 
@@ -781,11 +798,24 @@ MCP bridge 通过 `resolveFlowImageConfig()` 读取 server URL。
 1. `FLOWIMAGE_SERVER_URL`
 2. `PUBLIC_BASE_URL`
 3. `~/.flowimage/config.json` 中的 `server_url` 或 `serverUrl`
-4. 默认 `https://flow-image.like-water.net`
+4. 默认 `https://flow-image.liujinhang.com`
 
 旧字段 `pair_code` / `pairCode` 不再作为有效配置。
 
-### 10.2 ui_publish_screenshots
+### 10.2 flow_image_settings
+
+实现文件：`apps/mcp-bridge/src/tools/settings.mjs`
+
+职责：
+
+- 启动或复用插件本地设置页。
+- 默认尝试监听 `127.0.0.1:47839`。
+- 如果端口被占用，自动尝试下一个可用端口。
+- 返回实际 `settings_url`、`config_path` 和当前 `server_url`。
+
+Codex 不需要推理端口，也不需要查看源码。设置页地址必须来自这个工具的返回值。
+
+### 10.3 flow_image_publish
 
 实现文件：`apps/mcp-bridge/src/tools/publish.mjs`
 
@@ -795,6 +825,7 @@ MCP bridge 通过 `resolveFlowImageConfig()` 读取 server URL。
 - 校验 `screenshot_paths` 是非空数组。
 - 确认每个本地 PNG 文件存在。
 - 调用后端创建 session。
+- 上传前预处理 PNG：默认长边最大 `1920px`，保持长宽比，不放大小图。
 - 用 owner token 上传截图。
 - 将 owner token 和链接写入本地配置。
 - 返回 View/Edit/Owner 链接。
@@ -818,12 +849,28 @@ MCP bridge 通过 `resolveFlowImageConfig()` 读取 server URL。
 
 最多保留最近 20 个 session。
 
-### 10.3 ui_collect_annotations
+旧工具名 `ui_publish_screenshots` 委托到 `flow_image_publish`。
+
+### 10.4 flow_image_republish
+
+实现文件：`apps/mcp-bridge/src/tools/publish.mjs`
+
+职责：
+
+- 要求传入 `owner_url`，不允许缺省。
+- 从 Owner URL 解析短 token，并通过 `GET /api/share/owner/:token` 恢复 session。
+- 上传前执行同样的 PNG 预处理。
+- 用 `replace=true` 向同一个 session 替换截图。
+- 重新记忆该 session 的 owner token 和链接。
+- 不创建新 session。
+
+### 10.5 flow_image_sync
 
 实现文件：`apps/mcp-bridge/src/tools/collect.mjs`
 
 职责：
 
+- 如果用户传入 `owner_url`，先解析该 Owner session。
 - 如果用户传入 `session_id`，读取该 session 的本地 owner token。
 - 如果未传入，读取最近一次发布的 session。
 - 如果没有 owner token，明确报错，不回退到 pair code。
@@ -832,13 +879,16 @@ MCP bridge 通过 `resolveFlowImageConfig()` 读取 server URL。
 - 以 MCP `image/png` content 返回给 Codex。
 - 文本提醒用户先目视检查，不自动改代码。
 
-### 10.4 BackendClient
+旧工具名 `ui_collect_annotations` 委托到 `flow_image_sync`。
+
+### 10.6 BackendClient
 
 实现文件：`apps/mcp-bridge/src/backend-client.mjs`
 
 封装：
 
 - `createSession()`
+- `resolveOwnerSession()`
 - `uploadScreenshots()`
 - `collectAnnotations()`
 - `fetchAnnotationImage()`
@@ -1150,7 +1200,7 @@ corepack pnpm@11.7.0 test && corepack pnpm@11.7.0 dev:check && git diff --check
 步骤：
 
 1. Edit 端提交结果。
-2. Codex 调用 `ui_collect_annotations`。
+2. Codex 调用 `flow_image_sync`。
 3. MCP bridge 用 owner token collect。
 4. Codex 收到 image attachments。
 

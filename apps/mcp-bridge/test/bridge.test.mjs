@@ -1,14 +1,20 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { publishScreenshots } from "../src/tools/publish.mjs";
-import { collectAnnotations } from "../src/tools/collect.mjs";
+import {
+  flowImagePublish,
+  flowImageRepublish,
+  publishScreenshots
+} from "../src/tools/publish.mjs";
+import { collectAnnotations, flowImageSync } from "../src/tools/collect.mjs";
+import { preprocessScreenshots } from "../src/image-preprocess.mjs";
 import {
   readFlowImageSession,
   rememberFlowImageSession,
   resolveFlowImageConfig
 } from "../src/flowimage-config.mjs";
+import { createBlankPng, parsePngMeta } from "../../backend/src/lib/png.mjs";
 
 const png1x1 = Buffer.from(
   "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000a49444154789c6360000002000150a0f53a0000000049454e44ae426082",
@@ -23,6 +29,7 @@ beforeEach(async () => {
   deps = {
     backend: {
       createSession: vi.fn(),
+      resolveOwnerSession: vi.fn(),
       uploadScreenshots: vi.fn(),
       collectAnnotations: vi.fn(),
       fetchAnnotationImage: vi.fn()
@@ -199,6 +206,108 @@ describe("publishScreenshots", () => {
     expect(result.structuredContent.session_secret).toBeUndefined();
     expect(result.content[0].text).toContain("Edit Link");
   });
+
+  test("flow_image_publish creates a new session and uploads four screenshots in one request", async () => {
+    const filePaths = [];
+    for (let index = 0; index < 4; index += 1) {
+      const filePath = path.join(tmp, `shot-${index}.png`);
+      await writeFile(filePath, png1x1);
+      filePaths.push(filePath);
+    }
+    deps.backend.createSession.mockResolvedValue({
+      session_id: "sess_new",
+      view_url: "https://example.test/v/viewtoken12",
+      edit_url: "https://example.test/e/edittoken12",
+      owner_url: "https://example.test/o/owntoken123",
+      owner_token: "owntoken123"
+    });
+    deps.backend.uploadScreenshots.mockResolvedValue({
+      count: 4,
+      items: filePaths.map((_, index) => ({
+        screenshot_id: `shot_${String(index + 1).padStart(4, "0")}`,
+        page_index: index + 1,
+        label: `Page ${index + 1}`
+      }))
+    });
+
+    const result = await flowImagePublish({
+      session_title: "Four pages",
+      screenshot_paths: filePaths
+    }, deps);
+
+    expect(deps.backend.createSession).toHaveBeenCalledTimes(1);
+    expect(deps.backend.uploadScreenshots).toHaveBeenCalledTimes(1);
+    expect(deps.backend.uploadScreenshots.mock.calls[0][0]).toBe("sess_new");
+    expect(deps.backend.uploadScreenshots.mock.calls[0][1]).toHaveLength(4);
+    expect(result.structuredContent.owner_url).toBe("https://example.test/o/owntoken123");
+  });
+
+  test("flow_image_republish requires an owner URL and does not create a new session", async () => {
+    const filePath = path.join(tmp, "replacement.png");
+    await writeFile(filePath, png1x1);
+    deps.backend.resolveOwnerSession.mockResolvedValue({
+      session_id: "sess_existing",
+      view_url: "https://example.test/v/viewtoken12",
+      edit_url: "https://example.test/e/edittoken12",
+      owner_url: "https://example.test/o/owntoken123",
+      owner_token: "owntoken123"
+    });
+    deps.backend.uploadScreenshots.mockResolvedValue({
+      count: 1,
+      items: [{ screenshot_id: "shot_0001", page_index: 1, label: "" }]
+    });
+
+    await expect(
+      flowImageRepublish({ screenshot_paths: [filePath] }, deps)
+    ).rejects.toThrow(/owner_url/i);
+
+    const result = await flowImageRepublish({
+      owner_url: "https://example.test/o/owntoken123",
+      screenshot_paths: [filePath]
+    }, deps);
+
+    expect(deps.backend.createSession).not.toHaveBeenCalled();
+    expect(deps.backend.resolveOwnerSession).toHaveBeenCalledWith("https://example.test/o/owntoken123");
+    expect(deps.backend.uploadScreenshots).toHaveBeenCalledWith(
+      "sess_existing",
+      [filePath],
+      [],
+      "owntoken123",
+      { replace: true }
+    );
+    expect(result.structuredContent.session_id).toBe("sess_existing");
+  });
+});
+
+describe("screenshot preprocessing", () => {
+  test("resizes large PNGs without changing aspect ratio", async () => {
+    const originalPath = path.join(tmp, "wide.png");
+    await writeFile(originalPath, createBlankPng(384, 216));
+
+    const processed = await preprocessScreenshots([originalPath], {
+      maxDimension: 192,
+      tempDir: tmp
+    });
+    try {
+      const resized = await readFile(processed.paths[0]);
+      expect(parsePngMeta(resized)).toEqual({ width: 192, height: 108 });
+    } finally {
+      await processed.cleanup();
+    }
+  });
+
+  test("does not enlarge small PNGs", async () => {
+    const originalPath = path.join(tmp, "small.png");
+    await writeFile(originalPath, createBlankPng(10, 6));
+
+    const processed = await preprocessScreenshots([originalPath], {
+      maxDimension: 192,
+      tempDir: tmp
+    });
+
+    expect(processed.paths[0]).toBe(originalPath);
+    await processed.cleanup();
+  });
 });
 
 describe("collectAnnotations", () => {
@@ -279,6 +388,24 @@ describe("collectAnnotations", () => {
       mimeType: "image/png",
       data: png1x1.toString("base64")
     });
+  });
+
+  test("flow_image_sync pulls the latest remembered owner session", async () => {
+    deps.sessionRegistry.latest.mockReturnValue({
+      sessionId: "sess_latest",
+      ownerToken: "own_latest",
+      viewUrl: "https://example.test/v/viewlatest12"
+    });
+    deps.backend.collectAnnotations.mockResolvedValue({
+      session_id: "sess_latest",
+      ready_count: 0,
+      items: []
+    });
+
+    const result = await flowImageSync({}, deps);
+
+    expect(deps.backend.collectAnnotations).toHaveBeenCalledWith("sess_latest", "own_latest");
+    expect(result.structuredContent.session_id).toBe("sess_latest");
   });
 
   test("explains missing owner token instead of using pair code fallback", async () => {

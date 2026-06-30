@@ -6,10 +6,10 @@ It lets Codex publish screenshots to a browser/iPad canvas, lets a human draw or
 
 The MVP is intentionally small:
 
-1. Codex publishes one or more PNG screenshots through `ui_publish_screenshots`.
+1. Codex publishes one or more PNG screenshots through `flow_image_publish`.
 2. FlowImage creates a session with short View, Edit, and Owner links.
 3. The Edit link opens a canvas where a human can draw, erase, zoom, and save results.
-4. Codex collects ready merged PNG results through `ui_collect_annotations`.
+4. Codex collects ready merged PNG results through `flow_image_sync`.
 5. Codex modifies code only after explicit user confirmation.
 
 FlowImage is accountless. Permissions are capability links:
@@ -211,7 +211,7 @@ Use FlowImage to publish screenshots of the current UI.
 Codex should call:
 
 ```text
-ui_publish_screenshots
+flow_image_publish
 ```
 
 FlowImage returns:
@@ -232,7 +232,7 @@ Collect the latest FlowImage results.
 Codex should call:
 
 ```text
-ui_collect_annotations
+flow_image_sync
 ```
 
 Important workflow rule:
@@ -387,11 +387,11 @@ If the repo is private, make sure the target computer has GitHub credentials tha
 1. Start a FlowImage server.
 2. Install the Codex plugin.
 3. Configure `~/.flowimage/config.json`.
-4. Ask Codex to call `ui_publish_screenshots`.
+4. Ask Codex to call `flow_image_publish`.
 5. Open the returned Edit Link on iPad/Web.
 6. Draw, erase, zoom, submit, or use Realtime save.
 7. Open the View Link on another browser to confirm sync.
-8. Ask Codex to call `ui_collect_annotations`.
+8. Ask Codex to call `flow_image_sync`.
 9. Inspect the returned images/review URL.
 10. Tell Codex explicitly: `确认，按这些结果修改`.
 

@@ -76,6 +76,20 @@ export function makeRateLimitConfig(overrides = {}, env = process.env) {
       "FLOWIMAGE_UPLOAD_BYTES_LIMIT",
       600 * 1024 * 1024
     ),
+    capabilityUploadLimit: configNumber(
+      overrides,
+      "capabilityUploadLimit",
+      env,
+      "FLOWIMAGE_CAPABILITY_UPLOAD_LIMIT",
+      240
+    ),
+    capabilityUploadBytesLimit: configNumber(
+      overrides,
+      "capabilityUploadBytesLimit",
+      env,
+      "FLOWIMAGE_CAPABILITY_UPLOAD_BYTES_LIMIT",
+      600 * 1024 * 1024
+    ),
     sessionBytesLimit: configNumber(
       overrides,
       "sessionBytesLimit",

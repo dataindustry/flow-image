@@ -2,7 +2,7 @@ import express from "express";
 import multer from "multer";
 import { MAX_PNG_BYTES } from "../lib/config.mjs";
 import { parsePngMeta } from "../lib/png.mjs";
-import { rateLimitMiddleware } from "../lib/rate-limit.mjs";
+import { capabilityUploadKey, rateLimitMiddleware } from "../lib/rate-limit.mjs";
 import { publicAnnotation } from "../lib/store.mjs";
 import { requireSessionAccess } from "./sessions.mjs";
 
@@ -41,10 +41,11 @@ export function annotationsRouter({ config, store }) {
 
   router.post(
     "/:sessionId/annotations/:screenshotId",
-    rateLimitMiddleware(store, config.rateLimit, "upload", "uploadRequestLimit", {
-      byteLimitKey: "uploadBytesLimit"
-    }),
     requireSessionAccess(store, { allowEditToken: true, allowOwnerToken: true }),
+    rateLimitMiddleware(store, config.rateLimit, "capability_upload", "capabilityUploadLimit", {
+      byteLimitKey: "capabilityUploadBytesLimit",
+      key: capabilityUploadKey
+    }),
     upload.single("merged_png"),
     async (req, res) => {
       try {

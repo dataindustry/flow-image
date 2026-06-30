@@ -2,14 +2,20 @@ import { BackendClient } from "../backend-client.mjs";
 import { readFlowImageSession, readLatestFlowImageSession } from "../flowimage-config.mjs";
 
 export async function collectAnnotations(args, deps = {}) {
+  return flowImageSync(args, deps);
+}
+
+export async function flowImageSync(args, deps = {}) {
   const backend = deps.backend ?? new BackendClient();
   const sessionRegistry = deps.sessionRegistry ?? {
     read: (sessionId) => readFlowImageSession(sessionId),
     latest: () => readLatestFlowImageSession()
   };
-  const remembered = args.session_id
-    ? sessionRegistry.read(args.session_id)
-    : sessionRegistry.latest();
+  const remembered = args.owner_url
+    ? normalizeOwnerSession(await backend.resolveOwnerSession(args.owner_url))
+    : args.session_id
+      ? sessionRegistry.read(args.session_id)
+      : sessionRegistry.latest();
   if (!remembered?.sessionId || !remembered?.ownerToken) {
     throw new Error(
       "Missing FlowImage owner token for this session. Publish the session from this Codex setup again or provide a remembered session."
@@ -57,5 +63,15 @@ export async function collectAnnotations(args, deps = {}) {
       review_url: ready.review_url,
       annotations: ready.items
     }
+  };
+}
+
+function normalizeOwnerSession(session) {
+  return {
+    sessionId: session.sessionId ?? session.session_id,
+    ownerToken: session.ownerToken ?? session.owner_token,
+    viewUrl: session.viewUrl ?? session.view_url,
+    editUrl: session.editUrl ?? session.edit_url,
+    ownerUrl: session.ownerUrl ?? session.owner_url
   };
 }

@@ -20,9 +20,10 @@
     "capabilities": ["Interactive", "Write"],
     "websiteURL": "https://like-water.net",
     "defaultPrompt": [
-      "Open FlowImage settings",
-      "Verify FlowImage setup",
-      "Publish screenshots with FlowImage"
+      "FlowImage Settings",
+      "FlowImage Publish",
+      "FlowImage Republish",
+      "FlowImage Sync"
     ],
     "brandColor": "#2563EB"
   }

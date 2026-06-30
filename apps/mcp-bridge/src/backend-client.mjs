@@ -24,8 +24,22 @@ export class BackendClient {
     return readJson(res);
   }
 
-  async uploadScreenshots(sessionId, filePaths, labels = [], ownerToken) {
+  async resolveOwnerSession(ownerUrl) {
+    const parsed = new URL(ownerUrl);
+    const [, mode, token] = parsed.pathname.split("/");
+    if (mode !== "o" || !token) throw new Error("owner_url must be a FlowImage Owner URL");
+    const res = await fetch(`${this.baseUrl}/api/share/owner/${token}`);
+    const session = await readJson(res);
+    return {
+      ...session,
+      owner_token: token,
+      owner_url: new URL(`/o/${token}`, this.baseUrl).toString()
+    };
+  }
+
+  async uploadScreenshots(sessionId, filePaths, labels = [], ownerToken, options = {}) {
     const body = new FormData();
+    if (options.replace) body.append("replace", "true");
     for (const [index, filePath] of filePaths.entries()) {
       const bytes = await readFile(filePath);
       body.append("files[]", new Blob([bytes], { type: "image/png" }), path.basename(filePath));

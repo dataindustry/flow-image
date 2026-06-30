@@ -36,6 +36,9 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.17.4
         version: 1.29.0(zod@4.4.3)
+      pngjs:
+        specifier: 7.0.0
+        version: 7.0.0
       zod:
         specifier: ^4.4.3
         version: 4.4.3
@@ -1068,6 +1071,10 @@ packages:
   pngjs@5.0.0:
     resolution: {integrity: sha512-40QW5YalBNfQo5yRYmiw7Yz6TKKVr3h6970B2YE+3fQpsWcrbj1PzJgxeJ19DRQjhMbKPIuMY8rFaXc8moolVw==}
     engines: {node: '>=10.13.0'}
+
+  pngjs@7.0.0:
+    resolution: {integrity: sha512-LKWqWJRhstyYo9pGvgor/ivk2w94eSjE3RGVuzLGlr3NmD8bf7RcYGze1mNdEHRP6TRP6rMuDHk5t44hnTRyow==}
+    engines: {node: '>=14.19.0'}
 
   postcss@8.5.15:
     resolution: {integrity: sha512-FfR8sjd4em2T6fb3I2MwAJU7HWVMr9zba+enmQeeWFfCbm+UOC/0X4DS8XtpUTMwWMGbjKYP7xjfNekzyGmB3A==}
@@ -2409,6 +2416,8 @@ snapshots:
   pkce-challenge@5.0.1: {}
 
   pngjs@5.0.0: {}
+
+  pngjs@7.0.0: {}
 
   postcss@8.5.15:
     dependencies:

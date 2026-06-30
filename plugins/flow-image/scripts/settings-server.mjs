@@ -5,6 +5,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 
 const DEFAULT_SERVER_URL = "https://flow-image.liujinhang.com";
+export const PREFERRED_SETTINGS_PORT = 47839;
 
 export function defaultConfigPath(env = process.env) {
   return env.FLOWIMAGE_CONFIG_PATH ?? path.join(os.homedir(), ".flowimage", "config.json");
@@ -21,7 +22,7 @@ async function readJsonBody(req) {
   return text ? JSON.parse(text) : {};
 }
 
-async function loadConfig(configPath) {
+export async function loadConfig(configPath) {
   try {
     return JSON.parse(await readFile(configPath, "utf8"));
   } catch (error) {
@@ -157,7 +158,7 @@ async function testConnection(input) {
 export async function startSettingsServer({
   configPath = defaultConfigPath(),
   host = "127.0.0.1",
-  port = 0,
+  port = PREFERRED_SETTINGS_PORT,
   openBrowser = false
 } = {}) {
   const server = http.createServer(async (req, res) => {
@@ -186,7 +187,7 @@ export async function startSettingsServer({
     }
   });
 
-  await new Promise((resolve) => server.listen(port, host, resolve));
+  await listenWithFallback(server, { host, port });
   const address = server.address();
   const url = `http://${host}:${address.port}`;
   if (openBrowser) spawn("open", [`${url}/`], { stdio: "ignore", detached: true }).unref();
@@ -194,6 +195,36 @@ export async function startSettingsServer({
     url,
     close: () => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
   };
+}
+
+async function listenWithFallback(server, { host, port }) {
+  let nextPort = port;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    try {
+      await listenOnce(server, host, nextPort);
+      return;
+    } catch (error) {
+      if (error.code !== "EADDRINUSE" || nextPort === 0) throw error;
+      nextPort += 1;
+    }
+  }
+  throw new Error(`No available FlowImage settings port starting at ${port}`);
+}
+
+function listenOnce(server, host, port) {
+  return new Promise((resolve, reject) => {
+    const onError = (error) => {
+      server.off("listening", onListening);
+      reject(error);
+    };
+    const onListening = () => {
+      server.off("error", onError);
+      resolve();
+    };
+    server.once("error", onError);
+    server.once("listening", onListening);
+    server.listen(port, host);
+  });
 }
 
 async function main() {

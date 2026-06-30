@@ -10,15 +10,16 @@ function sendLimited(res, retryAfterSeconds) {
   });
 }
 
-export function rateLimitMiddleware(store, config, bucket, limitKey, { byteLimitKey } = {}) {
+export function rateLimitMiddleware(store, config, bucket, limitKey, { byteLimitKey, key } = {}) {
   return function flowImageRateLimit(req, res, next) {
     if (!config.enabled) {
       next();
       return;
     }
 
-    const key = `${bucket}:${clientKey(req)}`;
-    const requestResult = store.consumeRateLimit(key, {
+    const subject = key ? key(req) : clientKey(req);
+    const bucketKey = `${bucket}:${subject || clientKey(req)}`;
+    const requestResult = store.consumeRateLimit(bucketKey, {
       limit: config[limitKey],
       windowMs: config.windowMs,
       cost: 1
@@ -30,7 +31,7 @@ export function rateLimitMiddleware(store, config, bucket, limitKey, { byteLimit
 
     if (byteLimitKey) {
       const byteCost = Number(req.get("content-length") ?? 0);
-      const byteResult = store.consumeRateLimit(`${bucket}:bytes:${clientKey(req)}`, {
+      const byteResult = store.consumeRateLimit(`${bucket}:bytes:${subject || clientKey(req)}`, {
         limit: config[byteLimitKey],
         windowMs: config.windowMs,
         byteCost
@@ -43,4 +44,8 @@ export function rateLimitMiddleware(store, config, bucket, limitKey, { byteLimit
 
     next();
   };
+}
+
+export function capabilityUploadKey(req) {
+  return `${req.access ?? "unknown"}:${req.session?.session_id ?? "unknown"}`;
 }

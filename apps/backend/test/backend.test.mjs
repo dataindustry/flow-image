@@ -343,6 +343,91 @@ describe("built-in rate limits", () => {
     expect(upload.body.error).toBe("session_storage_limit");
   });
 
+  test("owner uploads use capability limits instead of low IP upload request limits", async () => {
+    const constrained = createApp({
+      dataDir,
+      publicBaseUrl: "https://example.test",
+      now: () => now,
+      rateLimit: {
+        enabled: true,
+        uploadRequestLimit: 0,
+        capabilityUploadLimit: 10
+      }
+    });
+    const created = await request(constrained).post("/api/sessions").send({ title: "Owner" });
+
+    const upload = await request(constrained)
+      .post(`/api/sessions/${created.body.session_id}/screenshots`)
+      .set("X-FlowImage-Owner-Token", created.body.owner_token)
+      .attach("files[]", png1x1, { filename: "one.png", contentType: "image/png" })
+      .attach("files[]", png1x1, { filename: "two.png", contentType: "image/png" })
+      .attach("files[]", png1x1, { filename: "three.png", contentType: "image/png" })
+      .attach("files[]", png1x1, { filename: "four.png", contentType: "image/png" });
+
+    expect(upload.status).toBe(200);
+    expect(upload.body.count).toBe(4);
+  });
+
+  test("capability upload limit still blocks excessive authenticated uploads", async () => {
+    const constrained = createApp({
+      dataDir,
+      publicBaseUrl: "https://example.test",
+      now: () => now,
+      rateLimit: {
+        enabled: true,
+        capabilityUploadLimit: 1
+      }
+    });
+    const created = await request(constrained).post("/api/sessions").send({ title: "Limit" });
+    const edit = shareParts(created.body.edit_url);
+    const screenshotUpload = await request(constrained)
+      .post(`/api/sessions/${created.body.session_id}/screenshots`)
+      .set("X-FlowImage-Owner-Token", created.body.owner_token)
+      .attach("files[]", png1x1, { filename: "shot.png", contentType: "image/png" });
+    const screenshot = screenshotUpload.body.items[0];
+
+    const first = await request(constrained)
+      .post(`/api/sessions/${created.body.session_id}/annotations/${screenshot.screenshot_id}`)
+      .set("X-FlowImage-Edit-Token", edit.token)
+      .attach("merged_png", png1x1, { filename: "merged.png", contentType: "image/png" });
+    const second = await request(constrained)
+      .post(`/api/sessions/${created.body.session_id}/annotations/${screenshot.screenshot_id}`)
+      .set("X-FlowImage-Edit-Token", edit.token)
+      .attach("merged_png", png1x1, { filename: "merged.png", contentType: "image/png" });
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(429);
+    expect(second.body.error).toBe("rate_limited");
+  });
+
+  test("replace screenshots updates the same owner session and clears old results", async () => {
+    const { session, owner } = await createLinkSession();
+    const screenshot = await uploadScreenshot(session);
+    const saved = await request(app)
+      .post(`/api/sessions/${session.session_id}/annotations/${screenshot.screenshot_id}`)
+      .set("X-FlowImage-Owner-Token", owner.token)
+      .attach("merged_png", png1x1, { filename: "merged.png", contentType: "image/png" });
+    expect(saved.status).toBe(200);
+
+    const replaced = await request(app)
+      .post(`/api/sessions/${session.session_id}/screenshots`)
+      .set("X-FlowImage-Owner-Token", owner.token)
+      .field("replace", "true")
+      .attach("files[]", png1x1, { filename: "new-one.png", contentType: "image/png" })
+      .attach("files[]", png1x1, { filename: "new-two.png", contentType: "image/png" });
+
+    expect(replaced.status).toBe(200);
+    expect(replaced.body.count).toBe(2);
+    expect(
+      app.locals.store.db.prepare("SELECT COUNT(*) AS total FROM screenshots WHERE session_id = ?").get(session.session_id)
+        .total
+    ).toBe(2);
+    expect(
+      app.locals.store.db.prepare("SELECT COUNT(*) AS total FROM results WHERE session_id = ?").get(session.session_id)
+        .total
+    ).toBe(0);
+  });
+
   test("cleans expired rate limit buckets during cleanup", async () => {
     const store = app.locals.store;
     store.db

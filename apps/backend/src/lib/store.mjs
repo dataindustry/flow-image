@@ -270,6 +270,21 @@ export class SessionStore {
     return items;
   }
 
+  async replaceScreenshots(session, files) {
+    await rm(path.join(this.sessionDirFor(session), "screenshots"), { recursive: true, force: true });
+    await rm(path.join(this.sessionDirFor(session), "annotations"), { recursive: true, force: true });
+    await mkdir(path.join(this.sessionDirFor(session), "screenshots"), { recursive: true });
+    await mkdir(path.join(this.sessionDirFor(session), "annotations"), { recursive: true });
+    this.db.prepare("DELETE FROM results WHERE session_id = ?").run(session.session_id);
+    this.db.prepare("DELETE FROM screenshots WHERE session_id = ?").run(session.session_id);
+    session.screenshots = [];
+    session.annotations = [];
+    session.status = "pending_result";
+    session.updated_at = this.now().toISOString();
+    await this.saveSession(session);
+    return this.addScreenshots(session, files);
+  }
+
   async saveMergedAnnotation(session, screenshotId, buffer, meta = {}) {
     const screenshot = session.screenshots.find((item) => item.screenshot_id === screenshotId);
     if (!screenshot) return null;
