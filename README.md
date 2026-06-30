@@ -65,10 +65,18 @@ apps/backend/data/files/
 
 This repository is designed to be shared as a standalone GitHub repo.
 
-On another computer, install the plugin directly from GitHub:
+On another computer, keep a local clone because the Codex plugin package is thin and starts the MCP bridge from this repo:
 
 ```bash
-codex plugin marketplace add https://github.com/<github-owner>/flow-image --ref main
+FLOWIMAGE_REPO_URL="https://github.com/<github-owner>/flow-image"
+FLOWIMAGE_REPO_DIR="$HOME/.flowimage/flow-image-repo"
+
+mkdir -p "$(dirname "$FLOWIMAGE_REPO_DIR")"
+git clone "$FLOWIMAGE_REPO_URL" "$FLOWIMAGE_REPO_DIR"
+cd "$FLOWIMAGE_REPO_DIR"
+corepack pnpm@11.7.0 install --frozen-lockfile
+
+codex plugin marketplace add "$FLOWIMAGE_REPO_DIR/.agents/plugins/marketplace.json"
 codex plugin add flow-image@flow-image-local
 ```
 
@@ -117,6 +125,7 @@ Set variables:
 ```bash
 FLOWIMAGE_REPO_URL="https://github.com/<github-owner>/flow-image"
 FLOWIMAGE_SERVER_URL="https://flow-image.liujinhang.com"
+FLOWIMAGE_REPO_DIR="$HOME/.flowimage/flow-image-repo"
 ```
 
 One-block install command for agents:
@@ -124,13 +133,27 @@ One-block install command for agents:
 ```bash
 FLOWIMAGE_REPO_URL="https://github.com/<github-owner>/flow-image" \
 FLOWIMAGE_SERVER_URL="https://flow-image.liujinhang.com" \
+FLOWIMAGE_REPO_DIR="$HOME/.flowimage/flow-image-repo" \
 bash <<'FLOWIMAGE_INSTALL'
 set -euo pipefail
 
 : "${FLOWIMAGE_REPO_URL:?FLOWIMAGE_REPO_URL is required}"
 : "${FLOWIMAGE_SERVER_URL:?FLOWIMAGE_SERVER_URL is required}"
+: "${FLOWIMAGE_REPO_DIR:?FLOWIMAGE_REPO_DIR is required}"
 
-codex plugin marketplace add "$FLOWIMAGE_REPO_URL" --ref main
+if [ -d "$FLOWIMAGE_REPO_DIR/.git" ]; then
+  git -C "$FLOWIMAGE_REPO_DIR" fetch origin main
+  git -C "$FLOWIMAGE_REPO_DIR" checkout main
+  git -C "$FLOWIMAGE_REPO_DIR" pull --ff-only origin main
+else
+  mkdir -p "$(dirname "$FLOWIMAGE_REPO_DIR")"
+  git clone "$FLOWIMAGE_REPO_URL" "$FLOWIMAGE_REPO_DIR"
+fi
+
+cd "$FLOWIMAGE_REPO_DIR"
+corepack pnpm@11.7.0 install --frozen-lockfile
+
+codex plugin marketplace add "$FLOWIMAGE_REPO_DIR/.agents/plugins/marketplace.json"
 codex plugin add flow-image@flow-image-local
 
 mkdir -p "$HOME/.flowimage"
@@ -141,15 +164,36 @@ cat > "$HOME/.flowimage/config.json" <<JSON
 JSON
 chmod 600 "$HOME/.flowimage/config.json"
 
+PLUGIN_CACHE="$HOME/.codex/plugins/cache/flow-image-local/flow-image/0.1.0"
+cat > "$PLUGIN_CACHE/.mcp.json" <<JSON
+{
+  "mcpServers": {
+    "flow_image": {
+      "command": "node",
+      "args": [
+        "$FLOWIMAGE_REPO_DIR/apps/mcp-bridge/src/index.mjs"
+      ],
+      "env": {
+        "FLOWIMAGE_CONFIG_PATH": "$HOME/.flowimage/config.json"
+      }
+    }
+  }
+}
+JSON
+
 codex plugin list --marketplace flow-image-local
 node "$HOME/.codex/plugins/cache/flow-image-local/flow-image/0.1.0/scripts/settings-server.mjs" --print-config
+node "$FLOWIMAGE_REPO_DIR/apps/mcp-bridge/src/index.mjs" < /dev/null
 FLOWIMAGE_INSTALL
 ```
 
 Install the marketplace and plugin:
 
 ```bash
-codex plugin marketplace add "$FLOWIMAGE_REPO_URL" --ref main
+git clone "$FLOWIMAGE_REPO_URL" "$FLOWIMAGE_REPO_DIR"
+cd "$FLOWIMAGE_REPO_DIR"
+corepack pnpm@11.7.0 install --frozen-lockfile
+codex plugin marketplace add "$FLOWIMAGE_REPO_DIR/.agents/plugins/marketplace.json"
 codex plugin add flow-image@flow-image-local
 ```
 
@@ -170,6 +214,7 @@ Verify installation:
 ```bash
 codex plugin list --marketplace flow-image-local
 node ~/.codex/plugins/cache/flow-image-local/flow-image/0.1.0/scripts/settings-server.mjs --print-config
+node "$FLOWIMAGE_REPO_DIR/apps/mcp-bridge/src/index.mjs" < /dev/null
 ```
 
 Expected:
