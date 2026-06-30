@@ -194,11 +194,28 @@ export async function startSettingsServer({
   await listenWithFallback(server, { host, port });
   const address = server.address();
   const url = `http://${host}:${address.port}`;
-  if (openBrowser) spawn("open", [`${url}/`], { stdio: "ignore", detached: true }).unref();
+  if (openBrowser) {
+    const opener = browserOpenCommand(`${url}/`);
+    spawn(opener.command, opener.args, {
+      stdio: "ignore",
+      detached: true,
+      windowsHide: true
+    }).unref();
+  }
   return {
     url,
     close: () => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
   };
+}
+
+export function browserOpenCommand(url, platform = process.platform) {
+  if (platform === "darwin") {
+    return { command: "open", args: [url] };
+  }
+  if (platform === "win32") {
+    return { command: "cmd", args: ["/c", "start", "", url] };
+  }
+  return { command: "xdg-open", args: [url] };
 }
 
 async function listenWithFallback(server, { host, port }) {

@@ -80,7 +80,9 @@ codex plugin marketplace add "$FLOWIMAGE_REPO_DIR/.agents/plugins/marketplace.js
 codex plugin add flow-image@flow-image-local
 ```
 
-Then configure the FlowImage server URL:
+Then configure the FlowImage server URL from Codex with `FlowImage Settings`, or write the config file.
+
+macOS/Linux:
 
 ```bash
 mkdir -p ~/.flowimage
@@ -90,6 +92,14 @@ cat > ~/.flowimage/config.json <<'JSON'
 }
 JSON
 chmod 600 ~/.flowimage/config.json
+```
+
+Windows PowerShell:
+
+```powershell
+New-Item -ItemType Directory -Force "$env:USERPROFILE\\.flowimage" | Out-Null
+'{ "server_url": "https://flow-image.liujinhang.com" }' |
+  Set-Content -Encoding UTF8 "$env:USERPROFILE\\.flowimage\\config.json"
 ```
 
 For a LAN dev server, use your server machine IP instead:
@@ -120,7 +130,7 @@ Assumptions:
 - Do not ask for a pair code. FlowImage no longer uses pair codes.
 - Prefer plugin installation over naked `codex mcp add`.
 
-Set variables:
+Set variables. macOS/Linux:
 
 ```bash
 FLOWIMAGE_REPO_URL="https://github.com/<github-owner>/flow-image"
@@ -128,7 +138,15 @@ FLOWIMAGE_SERVER_URL="https://flow-image.liujinhang.com"
 FLOWIMAGE_REPO_DIR="$HOME/.flowimage/flow-image-repo"
 ```
 
-One-block install command for agents:
+Windows PowerShell:
+
+```powershell
+$env:FLOWIMAGE_REPO_URL = "https://github.com/<github-owner>/flow-image"
+$env:FLOWIMAGE_SERVER_URL = "https://flow-image.liujinhang.com"
+$env:FLOWIMAGE_REPO_DIR = "$env:USERPROFILE\\.flowimage\\flow-image-repo"
+```
+
+One-block install command for macOS/Linux agents:
 
 ```bash
 FLOWIMAGE_REPO_URL="https://github.com/<github-owner>/flow-image" \
@@ -164,27 +182,44 @@ cat > "$HOME/.flowimage/config.json" <<JSON
 JSON
 chmod 600 "$HOME/.flowimage/config.json"
 
-PLUGIN_CACHE="$HOME/.codex/plugins/cache/flow-image-local/flow-image/0.1.0"
-cat > "$PLUGIN_CACHE/.mcp.json" <<JSON
-{
-  "mcpServers": {
-    "flow_image": {
-      "command": "node",
-      "args": [
-        "$FLOWIMAGE_REPO_DIR/apps/mcp-bridge/src/index.mjs"
-      ],
-      "env": {
-        "FLOWIMAGE_CONFIG_PATH": "$HOME/.flowimage/config.json"
-      }
-    }
-  }
-}
-JSON
+node scripts/configure-plugin-mcp.mjs "$FLOWIMAGE_REPO_DIR"
 
 codex plugin list --marketplace flow-image-local
 node "$HOME/.codex/plugins/cache/flow-image-local/flow-image/0.1.0/scripts/settings-server.mjs" --print-config
 node "$FLOWIMAGE_REPO_DIR/apps/mcp-bridge/src/index.mjs" < /dev/null
 FLOWIMAGE_INSTALL
+```
+
+One-block install command for Windows PowerShell agents:
+
+```powershell
+$ErrorActionPreference = "Stop"
+$env:FLOWIMAGE_REPO_URL = "https://github.com/<github-owner>/flow-image"
+$env:FLOWIMAGE_SERVER_URL = "https://flow-image.liujinhang.com"
+$env:FLOWIMAGE_REPO_DIR = "$env:USERPROFILE\\.flowimage\\flow-image-repo"
+
+if (Test-Path "$env:FLOWIMAGE_REPO_DIR\\.git") {
+  git -C $env:FLOWIMAGE_REPO_DIR fetch origin main
+  git -C $env:FLOWIMAGE_REPO_DIR checkout main
+  git -C $env:FLOWIMAGE_REPO_DIR pull --ff-only origin main
+} else {
+  New-Item -ItemType Directory -Force (Split-Path $env:FLOWIMAGE_REPO_DIR) | Out-Null
+  git clone $env:FLOWIMAGE_REPO_URL $env:FLOWIMAGE_REPO_DIR
+}
+
+Set-Location $env:FLOWIMAGE_REPO_DIR
+corepack pnpm@11.7.0 install --frozen-lockfile
+codex plugin marketplace add "$env:FLOWIMAGE_REPO_DIR\\.agents\\plugins\\marketplace.json"
+codex plugin add flow-image@flow-image-local
+
+New-Item -ItemType Directory -Force "$env:USERPROFILE\\.flowimage" | Out-Null
+"{ `"server_url`": `"$env:FLOWIMAGE_SERVER_URL`" }" |
+  Set-Content -Encoding UTF8 "$env:USERPROFILE\\.flowimage\\config.json"
+
+node scripts/configure-plugin-mcp.mjs $env:FLOWIMAGE_REPO_DIR
+codex plugin list --marketplace flow-image-local
+node "$env:USERPROFILE\\.codex\\plugins\\cache\\flow-image-local\\flow-image\\0.1.0\\scripts\\settings-server.mjs" --print-config
+node "$env:FLOWIMAGE_REPO_DIR\\apps\\mcp-bridge\\src\\index.mjs" < $null
 ```
 
 Install the marketplace and plugin:
@@ -328,10 +363,26 @@ If you need to force a specific public URL:
 BIND_HOST=0.0.0.0 PUBLIC_BASE_URL=http://<server-lan-ip>:3939 corepack pnpm@11.7.0 dev:backend
 ```
 
+Windows PowerShell:
+
+```powershell
+$env:BIND_HOST = "0.0.0.0"
+$env:PUBLIC_BASE_URL = "http://<server-lan-ip>:3939"
+corepack pnpm@11.7.0 dev:backend
+```
+
 For local-only testing, explicitly bind localhost:
 
 ```bash
 BIND_HOST=127.0.0.1 PUBLIC_BASE_URL=http://127.0.0.1:3939 corepack pnpm@11.7.0 dev:backend
+```
+
+Windows PowerShell:
+
+```powershell
+$env:BIND_HOST = "127.0.0.1"
+$env:PUBLIC_BASE_URL = "http://127.0.0.1:3939"
+corepack pnpm@11.7.0 dev:backend
 ```
 
 ### Local HTTPS For Clipboard Support
@@ -341,9 +392,10 @@ Browsers only allow writing PNG images to the system clipboard in a secure conte
 Recommended local certificate flow:
 
 ```bash
-brew install mkcert
 corepack pnpm@11.7.0 cert:local
 ```
+
+Install `mkcert` first if it is missing. On macOS you can use Homebrew; on Windows you can use Winget, Chocolatey, or Scoop.
 
 The script creates:
 
@@ -356,6 +408,13 @@ Start the HTTPS server:
 
 ```bash
 PUBLIC_BASE_URL=https://<server-lan-ip>:3939 corepack pnpm@11.7.0 dev:https
+```
+
+Windows PowerShell:
+
+```powershell
+$env:PUBLIC_BASE_URL = "https://<server-lan-ip>:3939"
+corepack pnpm@11.7.0 dev:https
 ```
 
 Then configure each Codex computer with:

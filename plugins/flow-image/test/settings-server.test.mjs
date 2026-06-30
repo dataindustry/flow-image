@@ -4,7 +4,11 @@ import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { loadConfig, startSettingsServer } from "../scripts/settings-server.mjs";
+import {
+  browserOpenCommand,
+  loadConfig,
+  startSettingsServer
+} from "../scripts/settings-server.mjs";
 
 const servers = [];
 
@@ -80,6 +84,36 @@ test("plugin manifest exposes only fixed FlowImage product commands", async () =
     "FlowImage Republish",
     "FlowImage Sync"
   ]);
+});
+
+test("root package scripts avoid Unix-only shell syntax", async () => {
+  const packageJson = JSON.parse(
+    await readFile(path.resolve(import.meta.dirname, "../../../package.json"), "utf8")
+  );
+
+  for (const [name, script] of Object.entries(packageJson.scripts)) {
+    assert.doesNotMatch(script, /\bbash\s+scripts\//, `${name} should not require bash`);
+    assert.doesNotMatch(
+      script,
+      /(^|\s)[A-Z_][A-Z0-9_]*=/,
+      `${name} should not use Unix-only env assignment`
+    );
+  }
+});
+
+test("settings browser opener supports macOS Windows and Linux", () => {
+  assert.deepEqual(browserOpenCommand("http://127.0.0.1:47839/", "darwin"), {
+    command: "open",
+    args: ["http://127.0.0.1:47839/"]
+  });
+  assert.deepEqual(browserOpenCommand("http://127.0.0.1:47839/", "win32"), {
+    command: "cmd",
+    args: ["/c", "start", "", "http://127.0.0.1:47839/"]
+  });
+  assert.deepEqual(browserOpenCommand("http://127.0.0.1:47839/", "linux"), {
+    command: "xdg-open",
+    args: ["http://127.0.0.1:47839/"]
+  });
 });
 
 test("settings server uses the fixed preferred local port when available", async () => {
