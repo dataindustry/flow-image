@@ -13,10 +13,6 @@ async function assertLocalFiles(paths) {
   }
 }
 
-export async function publishScreenshots(args, deps = {}) {
-  return flowImagePublish(args, deps);
-}
-
 export async function flowImagePublish(args, deps = {}) {
   const backend = deps.backend ?? new BackendClient();
   const sessionRegistry = deps.sessionRegistry ?? {

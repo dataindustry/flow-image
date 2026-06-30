@@ -53,7 +53,7 @@ export class BackendClient {
     return readJson(res);
   }
 
-  async collectAnnotations(sessionId, ownerToken) {
+  async collectResults(sessionId, ownerToken) {
     const res = await fetch(`${this.baseUrl}/api/sessions/${sessionId}/annotations/collect`, {
       method: "POST",
       headers: this.ownerHeaders(ownerToken)

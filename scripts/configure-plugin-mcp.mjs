@@ -1,10 +1,14 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
 const repoDir = path.resolve(process.argv[2] ?? process.cwd());
+const pluginManifest = JSON.parse(
+  await readFile(path.join(repoDir, "plugins", "flow-image", ".codex-plugin", "plugin.json"), "utf8")
+);
+const pluginCacheEnv = String(process.env.FLOWIMAGE_PLUGIN_CACHE ?? "").trim();
 const pluginCache =
-  process.env.FLOWIMAGE_PLUGIN_CACHE ??
+  pluginCacheEnv ||
   path.join(
     os.homedir(),
     ".codex",
@@ -12,11 +16,10 @@ const pluginCache =
     "cache",
     "flow-image-local",
     "flow-image",
-    "0.1.0"
+    pluginManifest.version
   );
-const configPath =
-  process.env.FLOWIMAGE_CONFIG_PATH ??
-  path.join(os.homedir(), ".flowimage", "config.json");
+const configPathEnv = String(process.env.FLOWIMAGE_CONFIG_PATH ?? "").trim();
+const configPath = configPathEnv || path.join(os.homedir(), ".flowimage", "config.json");
 const mcpPath = path.join(pluginCache, ".mcp.json");
 
 await mkdir(path.dirname(mcpPath), { recursive: true });

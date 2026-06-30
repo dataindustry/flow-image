@@ -86,6 +86,30 @@ test("plugin manifest exposes only fixed FlowImage product commands", async () =
   ]);
 });
 
+test("plugin skill documents only current MCP tools", async () => {
+  const skill = await readFile(
+    path.resolve(import.meta.dirname, "../skills/flow-image/SKILL.md"),
+    "utf8"
+  );
+
+  assert.match(skill, /flow_image_settings/);
+  assert.match(skill, /flow_image_publish/);
+  assert.match(skill, /flow_image_republish/);
+  assert.match(skill, /flow_image_sync/);
+  assert.doesNotMatch(skill, /ui_publish_screenshots|ui_collect_annotations|Compatibility aliases/);
+});
+
+test("active documentation does not reference removed MCP tools", async () => {
+  const activeDocs = await Promise.all([
+    readFile(path.resolve(import.meta.dirname, "../../../README.md"), "utf8"),
+    readFile(path.resolve(import.meta.dirname, "../../../docs/2026-06-29-flowimage-implementation.md"), "utf8")
+  ]);
+
+  for (const text of activeDocs) {
+    assert.doesNotMatch(text, /ui_publish_screenshots|ui_collect_annotations/);
+  }
+});
+
 test("root package scripts avoid Unix-only shell syntax", async () => {
   const packageJson = JSON.parse(
     await readFile(path.resolve(import.meta.dirname, "../../../package.json"), "utf8")

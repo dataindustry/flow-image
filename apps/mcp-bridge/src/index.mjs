@@ -1,14 +1,14 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { flowImagePublish, flowImageRepublish, publishScreenshots } from "./tools/publish.mjs";
-import { collectAnnotations, flowImageSync } from "./tools/collect.mjs";
+import { flowImagePublish, flowImageRepublish } from "./tools/publish.mjs";
+import { flowImageSync } from "./tools/collect.mjs";
 import { flowImageSettings } from "./tools/settings.mjs";
 
 export function createServer() {
   const server = new McpServer({
     name: "net.like-water/flow-image",
-    version: "0.1.0"
+    version: "0.2.0"
   });
 
   const publishSchema = {
@@ -38,16 +38,6 @@ export function createServer() {
       session_id: z.string().min(1).optional()
     },
     async (args) => flowImageSync(args)
-  );
-
-  server.tool("ui_publish_screenshots", publishSchema, async (args) => publishScreenshots(args));
-
-  server.tool(
-    "ui_collect_annotations",
-    {
-      session_id: z.string().min(1).optional()
-    },
-    async (args) => collectAnnotations(args)
   );
 
   return server;

@@ -25,13 +25,9 @@ node <flow-image-repo>/plugins/flow-image/scripts/settings-server.mjs --print-co
 
 After configuration, use the bundled `flow_image` MCP server tools:
 
+- `flow_image_settings`
 - `flow_image_publish`
 - `flow_image_republish`
 - `flow_image_sync`
-
-Compatibility aliases exist for older prompts:
-
-- `ui_publish_screenshots`
-- `ui_collect_annotations`
 
 Never modify application code immediately after collecting returned images. First show or summarize the returned images and wait for the user to confirm.

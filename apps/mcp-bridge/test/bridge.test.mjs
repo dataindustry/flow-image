@@ -4,10 +4,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   flowImagePublish,
-  flowImageRepublish,
-  publishScreenshots
+  flowImageRepublish
 } from "../src/tools/publish.mjs";
-import { collectAnnotations, flowImageSync } from "../src/tools/collect.mjs";
+import { flowImageSync } from "../src/tools/collect.mjs";
 import { preprocessScreenshots } from "../src/image-preprocess.mjs";
 import {
   readFlowImageSession,
@@ -15,6 +14,7 @@ import {
   resolveFlowImageConfig
 } from "../src/flowimage-config.mjs";
 import { createBlankPng, parsePngMeta } from "../../backend/src/lib/png.mjs";
+import { createServer } from "../src/index.mjs";
 
 const png1x1 = Buffer.from(
   "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000a49444154789c6360000002000150a0f53a0000000049454e44ae426082",
@@ -31,7 +31,7 @@ beforeEach(async () => {
       createSession: vi.fn(),
       resolveOwnerSession: vi.fn(),
       uploadScreenshots: vi.fn(),
-      collectAnnotations: vi.fn(),
+      collectResults: vi.fn(),
       fetchAnnotationImage: vi.fn()
     },
     sessionRegistry: {
@@ -46,6 +46,17 @@ beforeEach(async () => {
 });
 
 describe("flow image config", () => {
+  test("registers only explicit FlowImage MCP tools", () => {
+    const server = createServer();
+
+    expect(Object.keys(server._registeredTools).sort()).toEqual([
+      "flow_image_publish",
+      "flow_image_republish",
+      "flow_image_settings",
+      "flow_image_sync"
+    ]);
+  });
+
   test("loads server URL from FLOWIMAGE_CONFIG_PATH when env values are absent", async () => {
     const configPath = path.join(tmp, "flowimage-config.json");
     await writeFile(
@@ -124,10 +135,10 @@ describe("flow image config", () => {
   });
 });
 
-describe("publishScreenshots", () => {
+describe("flowImagePublish", () => {
   test("rejects missing local PNG before creating a session", async () => {
     await expect(
-      publishScreenshots({ session_title: "X", screenshot_paths: ["/missing.png"] }, deps)
+      flowImagePublish({ session_title: "X", screenshot_paths: ["/missing.png"] }, deps)
     ).rejects.toThrow(/missing/i);
 
     expect(deps.backend.createSession).not.toHaveBeenCalled();
@@ -148,7 +159,7 @@ describe("publishScreenshots", () => {
       items: [{ screenshot_id: "shot_0001", page_index: 1, label: "Settings" }]
     });
 
-    const result = await publishScreenshots(
+    const result = await flowImagePublish(
       { session_title: "Settings", screenshot_paths: [filePath], labels: ["Settings"] },
       deps
     );
@@ -192,7 +203,7 @@ describe("publishScreenshots", () => {
       items: [{ screenshot_id: "shot_0001", page_index: 1, label: "Settings" }]
     });
 
-    const result = await publishScreenshots(
+    const result = await flowImagePublish(
       { session_title: "Settings", screenshot_paths: [filePath] },
       deps
     );
@@ -310,15 +321,15 @@ describe("screenshot preprocessing", () => {
   });
 });
 
-describe("collectAnnotations", () => {
+describe("flowImageSync", () => {
   test("returns ready_count zero without error", async () => {
     deps.sessionRegistry.read.mockReturnValue({
       sessionId: "sess_x",
       ownerToken: "own_x"
     });
-    deps.backend.collectAnnotations.mockResolvedValue({ ready_count: 0, items: [] });
+    deps.backend.collectResults.mockResolvedValue({ ready_count: 0, items: [] });
 
-    const result = await collectAnnotations({ session_id: "sess_x" }, deps);
+    const result = await flowImageSync({ session_id: "sess_x" }, deps);
 
     expect(result.structuredContent.ready_count).toBe(0);
     expect(result.content[0].text).toContain("当前没有可收取的 FlowImage 结果");
@@ -329,7 +340,7 @@ describe("collectAnnotations", () => {
       sessionId: "sess",
       ownerToken: "own_1"
     });
-    deps.backend.collectAnnotations.mockResolvedValue({
+    deps.backend.collectResults.mockResolvedValue({
       ready_count: 1,
       items: [
         {
@@ -341,9 +352,9 @@ describe("collectAnnotations", () => {
     });
     deps.backend.fetchAnnotationImage.mockResolvedValue(png1x1);
 
-    const result = await collectAnnotations({ session_id: "sess" }, deps);
+    const result = await flowImageSync({ session_id: "sess" }, deps);
 
-    expect(deps.backend.collectAnnotations).toHaveBeenCalledWith("sess", "own_1");
+    expect(deps.backend.collectResults).toHaveBeenCalledWith("sess", "own_1");
     expect(deps.backend.fetchAnnotationImage).toHaveBeenCalledWith(
       "/files/sessions/sess/annotations/shot_0001-merged.png",
       "own_1"
@@ -363,7 +374,7 @@ describe("collectAnnotations", () => {
       ownerToken: "own_latest",
       viewUrl: "https://flow-image.liujinhang.com/v/viewlatest12"
     });
-    deps.backend.collectAnnotations.mockResolvedValue({
+    deps.backend.collectResults.mockResolvedValue({
       session_id: "sess_latest",
       ready_count: 1,
       review_url: "https://flow-image.liujinhang.com/s/sess_latest",
@@ -376,9 +387,9 @@ describe("collectAnnotations", () => {
     });
     deps.backend.fetchAnnotationImage.mockResolvedValue(png1x1);
 
-    const result = await collectAnnotations({}, deps);
+    const result = await flowImageSync({}, deps);
 
-    expect(deps.backend.collectAnnotations).toHaveBeenCalledWith("sess_latest", "own_latest");
+    expect(deps.backend.collectResults).toHaveBeenCalledWith("sess_latest", "own_latest");
     expect(result.content[0].text).toContain("请先目视检查");
     expect(result.content[0].text).toContain("https://flow-image.liujinhang.com/v/viewlatest12");
     expect(result.content[0].text).toContain("结果图");
@@ -396,7 +407,7 @@ describe("collectAnnotations", () => {
       ownerToken: "own_latest",
       viewUrl: "https://example.test/v/viewlatest12"
     });
-    deps.backend.collectAnnotations.mockResolvedValue({
+    deps.backend.collectResults.mockResolvedValue({
       session_id: "sess_latest",
       ready_count: 0,
       items: []
@@ -404,14 +415,14 @@ describe("collectAnnotations", () => {
 
     const result = await flowImageSync({}, deps);
 
-    expect(deps.backend.collectAnnotations).toHaveBeenCalledWith("sess_latest", "own_latest");
+    expect(deps.backend.collectResults).toHaveBeenCalledWith("sess_latest", "own_latest");
     expect(result.structuredContent.session_id).toBe("sess_latest");
   });
 
   test("explains missing owner token instead of using pair code fallback", async () => {
     deps.sessionRegistry.read.mockReturnValue(null);
 
-    await expect(collectAnnotations({ session_id: "sess_missing" }, deps)).rejects.toThrow(
+    await expect(flowImageSync({ session_id: "sess_missing" }, deps)).rejects.toThrow(
       /owner token/i
     );
   });

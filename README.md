@@ -114,7 +114,7 @@ Verify:
 
 ```bash
 codex plugin list --marketplace flow-image-local
-node ~/.codex/plugins/cache/flow-image-local/flow-image/0.1.0/scripts/settings-server.mjs --print-config
+node "$FLOWIMAGE_REPO_DIR/plugins/flow-image/scripts/settings-server.mjs" --print-config
 ```
 
 Restart Codex or open a new Codex thread after installation.
@@ -185,7 +185,7 @@ chmod 600 "$HOME/.flowimage/config.json"
 node scripts/configure-plugin-mcp.mjs "$FLOWIMAGE_REPO_DIR"
 
 codex plugin list --marketplace flow-image-local
-node "$HOME/.codex/plugins/cache/flow-image-local/flow-image/0.1.0/scripts/settings-server.mjs" --print-config
+node "$FLOWIMAGE_REPO_DIR/plugins/flow-image/scripts/settings-server.mjs" --print-config
 node "$FLOWIMAGE_REPO_DIR/apps/mcp-bridge/src/index.mjs" < /dev/null
 FLOWIMAGE_INSTALL
 ```
@@ -218,7 +218,7 @@ New-Item -ItemType Directory -Force "$env:USERPROFILE\\.flowimage" | Out-Null
 
 node scripts/configure-plugin-mcp.mjs $env:FLOWIMAGE_REPO_DIR
 codex plugin list --marketplace flow-image-local
-node "$env:USERPROFILE\\.codex\\plugins\\cache\\flow-image-local\\flow-image\\0.1.0\\scripts\\settings-server.mjs" --print-config
+node "$env:FLOWIMAGE_REPO_DIR\\plugins\\flow-image\\scripts\\settings-server.mjs" --print-config
 node "$env:FLOWIMAGE_REPO_DIR\\apps\\mcp-bridge\\src\\index.mjs" < $null
 ```
 
@@ -248,7 +248,7 @@ Verify installation:
 
 ```bash
 codex plugin list --marketplace flow-image-local
-node ~/.codex/plugins/cache/flow-image-local/flow-image/0.1.0/scripts/settings-server.mjs --print-config
+node "$FLOWIMAGE_REPO_DIR/plugins/flow-image/scripts/settings-server.mjs" --print-config
 node "$FLOWIMAGE_REPO_DIR/apps/mcp-bridge/src/index.mjs" < /dev/null
 ```
 
@@ -269,7 +269,7 @@ FlowImage is installed. Restart Codex or open a new thread, then ask Codex to pu
 Instead of writing `~/.flowimage/config.json` manually, you can open the plugin settings page:
 
 ```bash
-node ~/.codex/plugins/cache/flow-image-local/flow-image/0.1.0/scripts/settings-server.mjs --open
+node <flow-image-repo>/plugins/flow-image/scripts/settings-server.mjs --open
 ```
 
 The settings page writes:

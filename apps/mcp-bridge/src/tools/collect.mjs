@@ -1,10 +1,6 @@
 import { BackendClient } from "../backend-client.mjs";
 import { readFlowImageSession, readLatestFlowImageSession } from "../flowimage-config.mjs";
 
-export async function collectAnnotations(args, deps = {}) {
-  return flowImageSync(args, deps);
-}
-
 export async function flowImageSync(args, deps = {}) {
   const backend = deps.backend ?? new BackendClient();
   const sessionRegistry = deps.sessionRegistry ?? {
@@ -21,7 +17,7 @@ export async function flowImageSync(args, deps = {}) {
       "Missing FlowImage owner token for this session. Publish the session from this Codex setup again or provide a remembered session."
     );
   }
-  const ready = await backend.collectAnnotations(remembered.sessionId, remembered.ownerToken);
+  const ready = await backend.collectResults(remembered.sessionId, remembered.ownerToken);
   if (remembered.viewUrl) ready.review_url = remembered.viewUrl;
 
   if (!ready.items?.length) {
